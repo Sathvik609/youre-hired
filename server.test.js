@@ -22,6 +22,20 @@ function waitForConnect(socket) {
   });
 }
 
+function waitForSocketEvent(socket, event, timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off(event, onEvent);
+      reject(new Error(`${event} timed out`));
+    }, timeout);
+    function onEvent(...args) {
+      clearTimeout(timer);
+      resolve(args);
+    }
+    socket.once(event, onEvent);
+  });
+}
+
 function waitForState(socket, predicate, timeout = 5000) {
   if (socket.latestState && predicate(socket.latestState)) return Promise.resolve(socket.latestState);
   return new Promise((resolve, reject) => {
@@ -43,7 +57,7 @@ test("two players can complete a private, correctly scored round", async (t) => 
   await new Promise((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   const address = httpServer.address();
   const url = `http://127.0.0.1:${address.port}`;
-  const host = trackedClient(url);
+  let host = trackedClient(url);
   const guest = trackedClient(url);
   t.after(async () => {
     host.close();
@@ -54,8 +68,22 @@ test("two players can complete a private, correctly scored round", async (t) => 
   await Promise.all([waitForConnect(host), waitForConnect(guest)]);
   const created = await callbackEvent(host, "createRoom", { name: "Avery" });
   assert.equal(created.ok, true);
+
+  const originalHost = host;
+  const replacementHost = trackedClient(url);
+  await waitForConnect(replacementHost);
+  const sessionReplaced = waitForSocketEvent(originalHost, "sessionReplaced");
+  const originalDisconnected = waitForSocketEvent(originalHost, "disconnect");
+  assert.equal((await callbackEvent(replacementHost, "reconnectRoom", created)).ok, true);
+  await Promise.all([sessionReplaced, originalDisconnected]);
+  assert.equal(originalHost.connected, false, "the replaced socket should be disconnected");
+  host = replacementHost;
+
   const joined = await callbackEvent(guest, "joinRoom", { name: "Blake", code: created.code });
   assert.equal(joined.ok, true);
+  const replacementState = await waitForState(host, (state) => state.players.length === 2);
+  assert.equal(replacementState.players.find((player) => player.name === "Avery").connected, true,
+    "the stale disconnect must not mark the replacement socket offline");
   assert.equal((await callbackEvent(host, "updateSettings", { difficulty: "Easy", rounds: 2 })).ok, true);
   assert.equal((await callbackEvent(host, "startGame")).ok, true);
 

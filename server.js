@@ -332,6 +332,9 @@ function roomAndPlayer(socket) {
 }
 
 function attachPlayerToSocket(socket, room, player) {
+  const replacedSocketId = player.socketId && player.socketId !== socket.id
+    ? player.socketId
+    : null;
   player.socketId = socket.id;
   player.connected = true;
   player.disconnectedAt = null;
@@ -341,6 +344,14 @@ function attachPlayerToSocket(socket, room, player) {
   socket.data.playerToken = player.token;
   socket.join(room.code);
   room.emptySince = null;
+
+  if (replacedSocketId) {
+    const replacedSocket = io.sockets.sockets.get(replacedSocketId);
+    if (replacedSocket?.connected) {
+      replacedSocket.emit("sessionReplaced");
+      replacedSocket.disconnect(true);
+    }
+  }
 }
 
 io.on("connection", (socket) => {

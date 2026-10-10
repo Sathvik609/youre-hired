@@ -11,6 +11,7 @@ let clockDelta = 0;
 let countdownInterval = null;
 let toastTimer = null;
 let lastConfettiKey = null;
+let sessionWasReplaced = false;
 
 const storage = {
   get() {
@@ -75,8 +76,15 @@ socket.on("connect", async () => {
   }
 });
 
-socket.on("disconnect", () => setConnectionStatus(false));
+socket.on("sessionReplaced", () => {
+  sessionWasReplaced = true;
+  renderSessionReplaced();
+});
+socket.on("disconnect", () => {
+  if (!sessionWasReplaced) setConnectionStatus(false);
+});
 socket.on("state", (nextState) => {
+  sessionWasReplaced = false;
   gameState = nextState;
   clockDelta = nextState.serverNow - Date.now();
   render();
@@ -259,11 +267,14 @@ function timerMarkup() {
 function stageShell(content, sidebar = true) {
   const role = gameState.self.role;
   const panelNote = role === "panel" ? '<div class="panel-note">Panel view · The job stays secret</div>' : "";
+  const progressLabel = gameState.phase === "gameover"
+    ? "Final results"
+    : `Round ${gameState.roundNumber} of ${gameState.settings.rounds} · ${escapeHtml(gameState.settings.difficulty)}`;
   return `
     <div class="game-header">
       <div>
         <span class="eyebrow">Live interview</span>
-        <div class="round-label">Round ${gameState.roundNumber} of ${gameState.settings.rounds} · ${escapeHtml(gameState.settings.difficulty)}</div>
+        <div class="round-label">${progressLabel}</div>
       </div>
       ${scoreStrip()}
     </div>
@@ -271,6 +282,11 @@ function stageShell(content, sidebar = true) {
       <section class="card stage-card">${panelNote}${content}</section>
       ${sidebar ? `<aside class="side-stack"><div class="card compact-card"><h3>Offers</h3><div class="player-list">${playerRows(gameState.players, true)}</div></div><div class="card compact-card"><h3>Interview transcript</h3><div class="question-count">Question ${gameState.active?.questionNumber || 1} of 5</div>${transcriptMarkup()}</div></aside>` : ""}
     </div>`;
+}
+
+function secretJobChip() {
+  if (gameState.self.role !== "interviewer" || !gameState.active?.job) return "";
+  return `<div class="secret-job-chip"><span>Secret job</span><strong>${escapeHtml(gameState.active.job.title)}</strong></div>`;
 }
 
 function renderGame() {
@@ -361,6 +377,7 @@ function renderAnswer() {
   const { active } = gameState;
   let content = `
     <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Answer like you belong here" : `${escapeHtml(activeName(active.candidateId))} is answering`}</h2></div>${timerMarkup()}</div>
+    ${secretJobChip()}
     <div class="current-question">${escapeHtml(active.pendingQuestion)}</div>`;
   if (role === "candidate") {
     content += `
@@ -393,7 +410,8 @@ function renderGuess() {
   const { role } = gameState.self;
   const { active } = gameState;
   let content = `
-    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Make your final guess" : `${escapeHtml(activeName(active.candidateId))} is making a guess`}</h2></div>${timerMarkup()}</div>`;
+    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Make your final guess" : `${escapeHtml(activeName(active.candidateId))} is making a guess`}</h2></div>${timerMarkup()}</div>
+    ${secretJobChip()}`;
   if (role === "candidate") {
     content += `
       ${active.hint ? `<div class="hint-box">Your one-word hint: <span class="hint-word">${escapeHtml(active.hint)}</span></div>` : ""}
@@ -424,6 +442,8 @@ function renderGuess() {
 function renderResult() {
   const result = gameState.active.result;
   const canAdvance = [gameState.active.interviewerId, gameState.active.candidateId].includes(gameState.self.id);
+  const isLastRound = gameState.roundNumber >= gameState.settings.rounds;
+  const advanceLabel = isLastRound ? "See final results" : "Next round";
   const message = result.correct ? "You're Hired!" : "We'll be in touch.";
   const guessLine = result.timedOut ? "The guess timed out." : result.guess ? `The guess was “${escapeHtml(result.guess)}”.` : "No guess was submitted.";
   const content = `
@@ -433,7 +453,7 @@ function renderResult() {
       <div class="reveal"><span>The job was</span><strong>${escapeHtml(result.jobTitle)}</strong><p class="subtle" style="margin:8px 0 0">${guessLine}</p></div>
       <h3>Offers earned this round</h3>
       <div class="earnings">${result.earnings.map((earning) => `<div class="earning-row"><span>${escapeHtml(earning.name)}</span><strong>+${earning.offers} ${earning.offers === 1 ? "Offer" : "Offers"}</strong></div>`).join("")}</div>
-      ${canAdvance ? '<button class="button button-primary" id="nextRound" type="button">Next round</button>' : '<p class="subtle">Waiting for an active player to continue…</p>'}
+      ${canAdvance ? `<button class="button button-primary" id="nextRound" type="button">${advanceLabel}</button>` : '<p class="subtle">Waiting for an active player to continue…</p>'}
     </div>`;
   app.innerHTML = stageShell(content);
   document.querySelector("#nextRound")?.addEventListener("click", () => emitWithReply("nextRound"));
@@ -453,11 +473,55 @@ function renderGameOver() {
     <div class="stage-center">
       <span class="eyebrow">Final Offers</span>
       <div class="result-badge success">${escapeHtml(winnerText)}</div>
-      <div class="final-board">${sorted.map((player, index) => `<div class="final-row ${player.score === topScore ? "winner" : ""}"><span class="rank">#${index + 1}</span><span class="player-name">${escapeHtml(player.name)}</span><span class="offers">${player.score} ${player.score === 1 ? "Offer" : "Offers"}</span></div>`).join("")}</div>
+      <div class="final-board">${sorted.map((player) => {
+        const rank = sorted.findIndex((entry) => entry.score === player.score) + 1;
+        return `<div class="final-row ${player.score === topScore ? "winner" : ""}"><span class="rank">#${rank}</span><span class="player-name">${escapeHtml(player.name)}</span><span class="offers">${player.score} ${player.score === 1 ? "Offer" : "Offers"}</span></div>`;
+      }).join("")}</div>
       <button class="button button-primary" id="playAgain" type="button">Play again</button>
     </div>`;
   app.innerHTML = stageShell(content, false);
   document.querySelector("#playAgain").addEventListener("click", () => emitWithReply("playAgain"));
+}
+
+function renderSessionReplaced() {
+  clearInterval(countdownInterval);
+  helpButton.classList.add("hidden");
+  connectionStatus.textContent = "Opened elsewhere";
+  connectionStatus.classList.add("offline");
+  document.querySelector(".reconnect-overlay")?.remove();
+  const overlay = document.createElement("div");
+  overlay.className = "reconnect-overlay session-replaced-overlay";
+  overlay.innerHTML = `
+    <div class="card reconnect-card">
+      <span class="eyebrow">Session moved</span>
+      <h2>This game is open in another tab</h2>
+      <p class="subtle">Only one tab can control this player at a time.</p>
+      <button class="button button-primary" id="useThisTab" type="button">Use this tab instead</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#useThisTab").addEventListener("click", async () => {
+    const session = storage.get();
+    if (!session) {
+      sessionWasReplaced = false;
+      gameState = null;
+      overlay.remove();
+      renderHome("Your saved room is no longer available.");
+      return;
+    }
+    sessionWasReplaced = false;
+    setConnectionStatus(false);
+    if (!socket.connected) {
+      socket.connect();
+      return;
+    }
+    const response = await emitWithReply("reconnectRoom", session);
+    if (!response.ok) {
+      storage.clear();
+      gameState = null;
+      overlay.remove();
+      renderHome(response.error);
+    }
+  });
 }
 
 function renderReconnectOverlay() {
