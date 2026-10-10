@@ -51,7 +51,8 @@ Reviewers will test with exactly 2 devices, so the game must be fun and complete
 - Deploy target: **Railway** from the GitHub repo (real server, websockets OK). Prefer Node + Express + Socket.IO
   (or ws) with an in-memory room store. Server must read `PORT` from env and bind 0.0.0.0.
 - Netlify is a fallback only (Handshake's Netlify Functions + Blobs prompt exists if ever needed).
-- Not yet connected to Railway; do this once a working server exists.
+- Railway: project "youre-hired" (id 79751b7e-79c0-40f5-9823-e8fe73b3ec3a) in workspace "Sathvik Projects", service "youre-hired", auto-deploys from GitHub main.
+- Live URL: https://youre-hired-production.up.railway.app
 
 ## Submission checklist (Handshake submit page)
 - Project title, live link, cover screenshot (3:2, at least 1200px wide), description (max 500 chars:
