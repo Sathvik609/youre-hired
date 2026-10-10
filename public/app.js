@@ -100,20 +100,20 @@ function renderHome(errorMessage) {
   clearInterval(countdownInterval);
   helpButton.classList.add("hidden");
   app.innerHTML = `
-    <section class="hero-grid">
+    <section class="home-shell">
       <div class="hero-copy">
-        <span class="eyebrow">A suspiciously qualified party game</span>
-        <h1>You're<br><span class="accent">Hired?</span></h1>
-        <p class="lede">You don't know the job. You do have confidence. Bluff your way through the interview, then guess what you just got hired to do.</p>
+        <span class="eyebrow">A 2-player guessing game</span>
+        <h1>You're <span class="accent">Hired?</span></h1>
+        <p class="lede">One player interviews, the other bluffs. Answer like you already have the job, then guess what it is.</p>
       </div>
       <div class="card entry-card">
-        <span class="eyebrow">Check in</span>
-        <h2>Enter the waiting room</h2>
-        <p class="subtle">No résumé, login, or sensible career plan required.</p>
+        <span class="eyebrow">Join</span>
+        <h2>Join a game</h2>
+        <p class="subtle">No login needed.</p>
         <form id="entryForm">
           <div class="form-group">
             <label for="displayName">Display name</label>
-            <input id="displayName" maxlength="24" autocomplete="nickname" placeholder="e.g. Very Employable Sam" required />
+            <input id="displayName" maxlength="24" autocomplete="nickname" placeholder="Your name" required />
           </div>
           <button class="button button-primary button-block" id="createButton" type="button">Create room</button>
           <div class="divider">or join a room</div>
@@ -167,7 +167,7 @@ function playerRows(players, showScore = false) {
 function howToPlayCard() {
   return `
     <aside class="card rules-card">
-      <span class="eyebrow">Candidate briefing</span>
+      <span class="eyebrow">Rules</span>
       <h2>How to play</h2>
       <ol class="rules-list">
         <li>Each round, one player interviews and one is in the hot seat.</li>
@@ -182,7 +182,7 @@ function howToPlayCard() {
 function renderLobby() {
   const { code, players, settings, self } = gameState;
   app.innerHTML = `
-    <section>
+    <section class="lobby-shell">
       <div class="room-banner">
         <div>
           <span class="eyebrow">Waiting room</span>
@@ -190,11 +190,11 @@ function renderLobby() {
         </div>
         <button class="button button-ghost" id="copyCode" type="button">Copy code</button>
       </div>
-      <div class="lobby-grid">
+      <div class="lobby-stack">
         <div class="card">
           <div class="phase-heading">
             <div>
-              <h2>${players.length === 1 ? "Waiting for candidates" : "The panel is assembling"}</h2>
+              <h2>${players.length === 1 ? "Waiting for players" : "Ready to start"}</h2>
               <p class="subtle">${players.length}/8 seats filled</p>
             </div>
             <span class="status-chip">Live</span>
@@ -217,7 +217,7 @@ function renderLobby() {
             </div>
             <button class="button button-primary button-block" id="startGame" type="button" ${players.filter((player) => player.connected).length < 2 ? "disabled" : ""}>Start interviews</button>
           ` : `
-            <div class="waiting-note"><strong>${escapeHtml(players.find((player) => player.isHost)?.name || "The Hiring Manager")}</strong> is choosing the interview package.</div>
+            <div class="waiting-note"><strong>${escapeHtml(players.find((player) => player.isHost)?.name || "The Hiring Manager")}</strong> picks the settings and starts the game.</div>
           `}
         </div>
         ${howToPlayCard()}
@@ -243,7 +243,11 @@ function renderLobby() {
 }
 
 function scoreStrip() {
-  return `<div class="score-strip">${gameState.players.map((player) => `<span class="score-pill">${escapeHtml(player.name)} · <strong>${player.score}</strong></span>`).join("")}</div>`;
+  return `<div class="score-strip">${gameState.players.map((player) => `
+    <div class="score-player">
+      <span class="avatar">${escapeHtml(player.name.slice(0, 1).toUpperCase())}</span>
+      <span class="score-player-copy"><span class="score-player-name">${escapeHtml(player.name)}</span><strong>${player.score} ${player.score === 1 ? "Offer" : "Offers"}</strong></span>
+    </div>`).join("")}</div>`;
 }
 
 function activeName(id) {
@@ -254,33 +258,50 @@ function transcriptMarkup() {
   const active = gameState.active;
   if (!active?.transcript?.length) return '<div class="transcript-empty">The interview transcript will appear here.</div>';
   return `<div class="transcript">${active.transcript.map((item, index) => `
-    <div class="qa-item">
-      <p class="q">Q${index + 1}. ${escapeHtml(item.question)}</p>
-      <p class="a">${escapeHtml(item.answer)}</p>
+    <div class="transcript-exchange">
+      <div class="message-row question-row" style="--message-index:${index * 2}">
+        <div class="message-meta">Question ${index + 1}</div>
+        <p class="message-bubble question-bubble">${escapeHtml(item.question)}</p>
+      </div>
+      <div class="message-row answer-row" style="--message-index:${index * 2 + 1}">
+        <div class="message-meta">Answer</div>
+        <p class="message-bubble answer-bubble">${escapeHtml(item.answer)}</p>
+      </div>
     </div>`).join("")}</div>`;
 }
 
 function timerMarkup() {
-  return gameState.deadline ? '<div class="timer" data-countdown>30</div>' : "";
+  return gameState.deadline ? `
+    <div class="timer" data-countdown role="timer" aria-label="30 seconds remaining">
+      <svg class="timer-svg" viewBox="0 0 44 44" aria-hidden="true">
+        <circle class="timer-track" cx="22" cy="22" r="18"></circle>
+        <circle class="timer-progress" data-timer-progress cx="22" cy="22" r="18"></circle>
+      </svg>
+      <span class="timer-value" data-timer-value>30</span>
+    </div>` : "";
 }
 
-function stageShell(content, sidebar = true) {
+function stageShell(content, showTranscript = true) {
   const role = gameState.self.role;
   const panelNote = role === "panel" ? '<div class="panel-note">Panel view · The job stays secret</div>' : "";
   const progressLabel = gameState.phase === "gameover"
     ? "Final results"
     : `Round ${gameState.roundNumber} of ${gameState.settings.rounds} · ${escapeHtml(gameState.settings.difficulty)}`;
   return `
-    <div class="game-header">
-      <div>
-        <span class="eyebrow">Live interview</span>
-        <div class="round-label">${progressLabel}</div>
-      </div>
-      ${scoreStrip()}
-    </div>
-    <div class="game-grid">
-      <section class="card stage-card">${panelNote}${content}</section>
-      ${sidebar ? `<aside class="side-stack"><div class="card compact-card"><h3>Offers</h3><div class="player-list">${playerRows(gameState.players, true)}</div></div><div class="card compact-card"><h3>Interview transcript</h3><div class="question-count">Question ${gameState.active?.questionNumber || 1} of 5</div>${transcriptMarkup()}</div></aside>` : ""}
+    <div class="game-shell">
+      <header class="game-scorebar">
+        <div class="round-label"><span class="live-dot"></span>${progressLabel}</div>
+        ${scoreStrip()}
+      </header>
+      <section class="card stage-card phase-${gameState.phase}"><div class="stage-content">${panelNote}${content}</div></section>
+      ${showTranscript && gameState.active ? `
+        <section class="transcript-card" aria-label="Interview transcript">
+          <div class="transcript-heading">
+            <h3>Interview transcript</h3>
+            <span class="question-count">Question ${gameState.active.questionNumber || 1} of 5</span>
+          </div>
+          ${transcriptMarkup()}
+        </section>` : ""}
     </div>`;
 }
 
@@ -306,12 +327,12 @@ function renderRole() {
   let body = `Watch ${escapeHtml(activeName(active.interviewerId))} interview ${escapeHtml(activeName(active.candidateId))}. The job stays secret.`;
   if (role === "interviewer") {
     title = "You're the Interviewer";
-    body = `<div class="secret-card"><span class="label">Your secret opening</span><div class="secret-job">${escapeHtml(active.job.title)}</div><span>${escapeHtml(active.job.difficulty)} · Don't say it out loud.</span></div>`;
+    body = `<div class="secret-card"><span class="label">Your secret job</span><div class="secret-job">${escapeHtml(active.job.title)}</div><span>${escapeHtml(active.job.difficulty)} · Don't say it.</span></div>`;
   } else if (role === "candidate") {
     title = "You're in the hot seat";
-    body = "Answer with confidence. You don't know the job yet—and that's the point.";
+    body = "You don't know the job. Answer like you do, then guess it.";
   }
-  app.innerHTML = stageShell(`<div class="stage-center"><span class="eyebrow">Roles assigned</span><h1 class="role-title">${title}</h1><div class="lede">${body}</div><p class="subtle">Interview starts in a moment…</p></div>`);
+  app.innerHTML = stageShell(`<div class="stage-center"><span class="eyebrow">Roles assigned</span><h1 class="role-title">${title}</h1><div class="lede">${body}</div><p class="subtle">Starting…</p></div>`);
 }
 
 function renderQuestion() {
@@ -320,25 +341,25 @@ function renderQuestion() {
   let content;
   if (role === "interviewer") {
     content = `
+      ${secretJobChip()}
       <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>Ask your next question</h2></div></div>
-      <div class="secret-card"><span class="label">Secret job</span><div class="secret-job">${escapeHtml(active.job.title)}</div><span>${escapeHtml(active.job.difficulty)}</span></div>
-      <form id="questionForm" style="margin-top:22px">
-        <div class="form-group"><label for="questionInput">Your question</label><input id="questionInput" maxlength="240" placeholder="Ask something revealing—but not too revealing" required /></div>
-        <div class="preset-list">${gameState.presets.map((question) => `<button class="preset-button" type="button" data-preset="${escapeHtml(question)}">${escapeHtml(question)}</button>`).join("")}</div>
+      <form class="action-area" id="questionForm">
+        <div class="form-group"><label for="questionInput">Your question</label><input id="questionInput" maxlength="240" placeholder="Type a question" required /></div>
         <button class="button button-primary" type="submit">Ask question</button>
+        <div class="preset-list">${gameState.presets.map((question) => `<button class="preset-button" type="button" data-preset="${escapeHtml(question)}">${escapeHtml(question)}</button>`).join("")}</div>
       </form>`;
   } else if (role === "candidate") {
     content = `
-      <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>The Interviewer is thinking</h2></div></div>
-      <p class="lede">Prepare a confident answer. Accuracy is optional; commitment is not.</p>
+      <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>Waiting for a question</h2></div></div>
+      <p class="lede">Get ready to answer.</p>
       ${active.hint ? `<div class="hint-box">Your one-word hint: <span class="hint-word">${escapeHtml(active.hint)}</span></div>` : ""}
-      <div class="button-row" style="margin-top:18px">
+      <div class="button-row action-area">
         ${active.transcript.length ? '<button class="button button-primary" id="makeGuess" type="button">Make my guess</button>' : ""}
-        ${active.canUseHint ? '<button class="button button-ghost" id="useHint" type="button">Use my one-time Job Hint</button>' : ""}
+        ${active.canUseHint ? '<button class="button button-ghost" id="useHint" type="button">Use hint (once per game)</button>' : ""}
       </div>
-      <p class="subtle" style="margin-top:12px">A hint reduces your payout by 2 only if your guess is correct, with a minimum of 1.</p>`;
+      <p class="subtle" style="margin-top:12px">A hint costs 2 Offers from a correct guess (minimum 1).</p>`;
   } else {
-    content = `<div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${escapeHtml(activeName(active.interviewerId))} is choosing a question</h2></div></div><p class="lede">Watch the interview unfold. The Panel never sees the secret job.</p>`;
+    content = `<div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${escapeHtml(activeName(active.interviewerId))} is choosing a question</h2></div></div><p class="lede">You're watching this round.</p>`;
   }
   app.innerHTML = stageShell(content);
   if (role === "interviewer") bindQuestionForm();
@@ -376,18 +397,18 @@ function renderAnswer() {
   const { role } = gameState.self;
   const { active } = gameState;
   let content = `
-    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Answer like you belong here" : `${escapeHtml(activeName(active.candidateId))} is answering`}</h2></div>${timerMarkup()}</div>
     ${secretJobChip()}
+    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Answer the question" : `${escapeHtml(activeName(active.candidateId))} is answering`}</h2></div>${timerMarkup()}</div>
     <div class="current-question">${escapeHtml(active.pendingQuestion)}</div>`;
   if (role === "candidate") {
     content += `
       ${active.hint ? `<div class="hint-box">Your one-word hint: <span class="hint-word">${escapeHtml(active.hint)}</span></div>` : ""}
-      <form id="answerForm">
-        <div class="form-group"><label for="answerInput">Your answer</label><textarea id="answerInput" maxlength="400" placeholder="Sound confident. Make it plausible. Or don't." autofocus>${escapeHtml(active.draft || "")}</textarea></div>
+      <form class="action-area" id="answerForm">
+        <div class="form-group"><label for="answerInput">Your answer</label><textarea id="answerInput" maxlength="400" placeholder="Type your answer" autofocus>${escapeHtml(active.draft || "")}</textarea></div>
         <div class="button-row"><button class="button button-primary" type="submit">Submit answer</button>${active.canUseHint ? '<button class="button button-ghost" id="useHint" type="button">Use Job Hint</button>' : ""}</div>
       </form>`;
   } else {
-    content += `<p class="waiting-note">Their answer will be submitted automatically when the timer reaches zero.</p>`;
+    content += `<p class="waiting-note">Their answer submits automatically when the timer ends.</p>`;
   }
   app.innerHTML = stageShell(content);
   if (role === "candidate") {
@@ -410,17 +431,18 @@ function renderGuess() {
   const { role } = gameState.self;
   const { active } = gameState;
   let content = `
-    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Make your final guess" : `${escapeHtml(activeName(active.candidateId))} is making a guess`}</h2></div>${timerMarkup()}</div>
-    ${secretJobChip()}`;
+    ${secretJobChip()}
+    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Guess the job" : `${escapeHtml(activeName(active.candidateId))} is making a guess`}</h2></div>${timerMarkup()}</div>
+    `;
   if (role === "candidate") {
     content += `
       ${active.hint ? `<div class="hint-box">Your one-word hint: <span class="hint-word">${escapeHtml(active.hint)}</span></div>` : ""}
-      <form id="guessForm">
+      <form class="action-area" id="guessForm">
         <div class="form-group"><label for="guessInput">What is the job?</label><input id="guessInput" maxlength="120" placeholder="Enter the job title" autocomplete="off" value="${escapeHtml(active.draft || "")}" autofocus required /></div>
         <div class="button-row"><button class="button button-primary" type="submit">Submit guess</button>${active.canUseHint ? '<button class="button button-ghost" id="useHint" type="button">Use Job Hint</button>' : ""}</div>
       </form>`;
   } else {
-    content += `<p class="lede">One guess. Thirty seconds. A career hangs in the balance.</p>`;
+    content += `<p class="lede">They have one guess and 30 seconds.</p>`;
   }
   app.innerHTML = stageShell(content);
   if (role === "candidate") {
@@ -448,14 +470,14 @@ function renderResult() {
   const guessLine = result.timedOut ? "The guess timed out." : result.guess ? `The guess was “${escapeHtml(result.guess)}”.` : "No guess was submitted.";
   const content = `
     <div class="stage-center">
-      <span class="eyebrow">Interview complete</span>
+      <span class="eyebrow">Round over</span>
       <div class="result-badge ${result.correct ? "success" : "fail"}">${message}</div>
       <div class="reveal"><span>The job was</span><strong>${escapeHtml(result.jobTitle)}</strong><p class="subtle" style="margin:8px 0 0">${guessLine}</p></div>
       <h3>Offers earned this round</h3>
       <div class="earnings">${result.earnings.map((earning) => `<div class="earning-row"><span>${escapeHtml(earning.name)}</span><strong>+${earning.offers} ${earning.offers === 1 ? "Offer" : "Offers"}</strong></div>`).join("")}</div>
       ${canAdvance ? `<button class="button button-primary" id="nextRound" type="button">${advanceLabel}</button>` : '<p class="subtle">Waiting for an active player to continue…</p>'}
     </div>`;
-  app.innerHTML = stageShell(content);
+  app.innerHTML = stageShell(content, false);
   document.querySelector("#nextRound")?.addEventListener("click", () => emitWithReply("nextRound"));
   const confettiKey = `${gameState.roundNumber}-${result.jobTitle}`;
   if (result.correct && lastConfettiKey !== confettiKey) {
@@ -468,14 +490,15 @@ function renderGameOver() {
   const sorted = [...gameState.players].sort((a, b) => b.score - a.score);
   const topScore = sorted[0]?.score ?? 0;
   const winners = sorted.filter((player) => player.score === topScore);
+  const displayPlayers = [...sorted.filter((player) => player.score !== topScore), ...winners];
   const winnerText = winners.length > 1 ? "Co-hired!" : `${winners[0]?.name || "Nobody"} is hired!`;
   const content = `
     <div class="stage-center">
-      <span class="eyebrow">Final Offers</span>
+      <span class="eyebrow">Final scores</span>
       <div class="result-badge success">${escapeHtml(winnerText)}</div>
-      <div class="final-board">${sorted.map((player) => {
+      <div class="final-board">${displayPlayers.map((player, displayIndex) => {
         const rank = sorted.findIndex((entry) => entry.score === player.score) + 1;
-        return `<div class="final-row ${player.score === topScore ? "winner" : ""}"><span class="rank">#${rank}</span><span class="player-name">${escapeHtml(player.name)}</span><span class="offers">${player.score} ${player.score === 1 ? "Offer" : "Offers"}</span></div>`;
+        return `<div class="final-row ${player.score === topScore ? "winner" : ""}" style="--row-index:${displayIndex}"><span class="rank">#${rank}</span><span class="player-name">${escapeHtml(player.name)}</span><span class="offers">${player.score} ${player.score === 1 ? "Offer" : "Offers"}</span></div>`;
       }).join("")}</div>
       <button class="button button-primary" id="playAgain" type="button">Play again</button>
     </div>`;
@@ -539,9 +562,16 @@ function startCountdown() {
   const update = () => {
     const timer = document.querySelector("[data-countdown]");
     if (!timer || !gameState?.deadline) return;
-    const remaining = Math.max(0, Math.ceil((gameState.deadline - (Date.now() + clockDelta)) / 1000));
-    timer.textContent = remaining;
-    timer.classList.toggle("urgent", remaining <= 8);
+    const remainingMs = Math.max(0, gameState.deadline - (Date.now() + clockDelta));
+    const remaining = Math.ceil(remainingMs / 1000);
+    const circumference = 2 * Math.PI * 18;
+    const progress = Math.min(1, remainingMs / 30_000);
+    const value = timer.querySelector("[data-timer-value]");
+    const ring = timer.querySelector("[data-timer-progress]");
+    if (value) value.textContent = remaining;
+    if (ring) ring.style.strokeDashoffset = String(circumference * (1 - progress));
+    timer.classList.toggle("urgent", remaining < 10);
+    timer.setAttribute("aria-label", `${remaining} seconds remaining`);
   };
   update();
   countdownInterval = setInterval(update, 250);
