@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { io: createClient } = require("socket.io-client");
-const { httpServer } = require("./server");
+const { httpServer, rooms } = require("./server");
 
 function callbackEvent(socket, event, payload = {}) {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
@@ -66,6 +66,20 @@ test("two players can complete a private, correctly scored round", async (t) => 
   });
 
   await Promise.all([waitForConnect(host), waitForConnect(guest)]);
+
+  const transferHost = trackedClient(url);
+  const transferGuest = trackedClient(url);
+  await Promise.all([waitForConnect(transferHost), waitForConnect(transferGuest)]);
+  const transferRoom = await callbackEvent(transferHost, "createRoom", { name: "First Host" });
+  assert.equal((await callbackEvent(transferGuest, "joinRoom", { name: "Next Host", code: transferRoom.code })).ok, true);
+  assert.equal((await callbackEvent(transferHost, "leaveRoom")).ok, true);
+  const transferredState = await waitForState(transferGuest, (state) => state.players.length === 1);
+  assert.equal(transferredState.self.isHost, true, "the next lobby player should become Hiring Manager");
+  assert.equal((await callbackEvent(transferGuest, "leaveRoom")).ok, true);
+  assert.equal(rooms.has(transferRoom.code), false, "an explicitly emptied room should be deleted immediately");
+  transferHost.close();
+  transferGuest.close();
+
   const created = await callbackEvent(host, "createRoom", { name: "Avery" });
   assert.equal(created.ok, true);
 
@@ -118,4 +132,11 @@ test("two players can complete a private, correctly scored round", async (t) => 
   assert.equal(result.active.result.correct, true);
   assert.equal(result.active.result.questionCount, 1);
   assert.deepEqual(result.active.result.earnings.map((item) => item.offers), [5, 5]);
+
+  assert.equal((await callbackEvent(candidate, "leaveRoom")).ok, true);
+  const finalState = await waitForState(interviewer, (state) => state.phase === "gameover");
+  assert.deepEqual(finalState.players.map((player) => player.name), ["Avery"],
+    "an active departure should end the game for the remaining player");
+  assert.equal((await callbackEvent(interviewer, "leaveRoom")).ok, true);
+  assert.equal(rooms.has(created.code), false);
 });

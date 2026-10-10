@@ -25,3 +25,10 @@ Found:
 3. Fixed: tied players both show #1 under "Co-hired!".
 4. Fixed: last-round button reads "See final results".
 5. Fixed: Interviewer keeps a "Secret job" chip during answer and guess phases.
+
+## Fix pass 2 — 2026-10-10 (ChatGPT), verified in Chrome
+7. Found after deploy: opening the live URL in a browser that had played before silently rejoined the old
+   room, and there was no way to leave. Fixed: "Leave" button in the top bar and on the final screen
+   (clears the saved session), host transfers to the next player if the host leaves the lobby, an active
+   player leaving mid-game ends the game with the final scoreboard, empty rooms delete immediately, and
+   auto-rejoin shows a "Rejoined room XXXX as Name" toast.

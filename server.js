@@ -324,6 +324,29 @@ function removeLobbyPlayer(room, token) {
   emitState(room);
 }
 
+function removePlayerFromRoom(room, player) {
+  const wasActive = room.active
+    && [room.active.interviewerId, room.active.candidateId].includes(player.id);
+  if (player.reconnectTimer) clearTimeout(player.reconnectTimer);
+  room.waitingTokens.delete(player.token);
+  room.players.delete(player.token);
+  room.playerOrder = room.playerOrder.filter((token) => token !== player.token);
+  room.matchPlayerTokens = room.matchPlayerTokens.filter((token) => token !== player.token);
+
+  if (!room.players.size) {
+    clearPhaseTimer(room);
+    rooms.delete(room.code);
+    return;
+  }
+
+  if (room.hostToken === player.token) room.hostToken = room.playerOrder[0];
+  if (room.phase !== "lobby" && room.phase !== "gameover" && wasActive) {
+    endGame(room);
+    return;
+  }
+  emitState(room);
+}
+
 function roomAndPlayer(socket) {
   const room = rooms.get(socket.data.roomCode);
   const player = room?.players.get(socket.data.playerToken);
@@ -432,8 +455,20 @@ io.on("connection", (socket) => {
     if (!room || !player) return reply(callback, { ok: false, error: "Your saved room is no longer available." });
     attachPlayerToSocket(socket, room, player);
     resumeAfterReconnect(room, player.token);
-    reply(callback, { ok: true, code: room.code, token: player.token });
+    reply(callback, { ok: true, code: room.code, token: player.token, name: player.name });
     emitState(room);
+  });
+
+  socket.on("leaveRoom", (_payload, callback) => {
+    const { room, player } = roomAndPlayer(socket);
+    if (!room || !player || player.socketId !== socket.id) {
+      return reply(callback, { ok: false, error: "You are not in that room." });
+    }
+    socket.leave(room.code);
+    socket.data.roomCode = null;
+    socket.data.playerToken = null;
+    removePlayerFromRoom(room, player);
+    reply(callback, { ok: true });
   });
 
   socket.on("updateSettings", ({ difficulty, rounds } = {}, callback) => {

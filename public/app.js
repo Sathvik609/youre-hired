@@ -2,9 +2,11 @@ const socket = io();
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 const connectionStatus = document.querySelector("#connectionStatus");
+const leaveButton = document.querySelector("#leaveButton");
 const helpButton = document.querySelector("#helpButton");
 const helpDialog = document.querySelector("#helpDialog");
 const closeHelp = document.querySelector("#closeHelp");
+const brandButton = document.querySelector("#brandButton");
 
 let gameState = null;
 let clockDelta = 0;
@@ -12,6 +14,7 @@ let countdownInterval = null;
 let toastTimer = null;
 let lastConfettiKey = null;
 let sessionWasReplaced = false;
+let rejoinToastShown = false;
 
 const storage = {
   get() {
@@ -73,6 +76,9 @@ socket.on("connect", async () => {
     storage.clear();
     gameState = null;
     renderHome(response.error);
+  } else if (!rejoinToastShown) {
+    rejoinToastShown = true;
+    showToast(`Rejoined room ${response.code} as ${response.name}`);
   }
 });
 
@@ -96,9 +102,28 @@ helpDialog.addEventListener("click", (event) => {
   if (event.target === helpDialog) helpDialog.close();
 });
 
+function leaveCurrentRoom() {
+  leaveButton.disabled = true;
+  if (socket.connected) socket.emit("leaveRoom", {}, () => {});
+  storage.clear();
+  gameState = null;
+  sessionWasReplaced = false;
+  document.querySelector(".reconnect-overlay")?.remove();
+  renderHome();
+  leaveButton.disabled = false;
+}
+
+leaveButton.addEventListener("click", leaveCurrentRoom);
+brandButton.addEventListener("click", () => {
+  if (gameState) return;
+  renderHome();
+});
+
 function renderHome(errorMessage) {
   clearInterval(countdownInterval);
+  leaveButton.classList.add("hidden");
   helpButton.classList.add("hidden");
+  brandButton.removeAttribute("aria-disabled");
   app.innerHTML = `
     <section class="home-shell">
       <div class="hero-copy">
@@ -146,7 +171,9 @@ function renderHome(errorMessage) {
 
 function render() {
   if (!gameState) return renderHome();
+  leaveButton.classList.remove("hidden");
   helpButton.classList.remove("hidden");
+  brandButton.setAttribute("aria-disabled", "true");
   if (gameState.phase === "lobby") renderLobby();
   else renderGame();
   renderReconnectOverlay();
@@ -500,14 +527,19 @@ function renderGameOver() {
         const rank = sorted.findIndex((entry) => entry.score === player.score) + 1;
         return `<div class="final-row ${player.score === topScore ? "winner" : ""}" style="--row-index:${displayIndex}"><span class="rank">#${rank}</span><span class="player-name">${escapeHtml(player.name)}</span><span class="offers">${player.score} ${player.score === 1 ? "Offer" : "Offers"}</span></div>`;
       }).join("")}</div>
-      <button class="button button-primary" id="playAgain" type="button">Play again</button>
+      <div class="button-row final-actions">
+        <button class="button button-primary" id="playAgain" type="button">Play again</button>
+        <button class="button button-ghost" id="leaveGame" type="button">Leave</button>
+      </div>
     </div>`;
   app.innerHTML = stageShell(content, false);
   document.querySelector("#playAgain").addEventListener("click", () => emitWithReply("playAgain"));
+  document.querySelector("#leaveGame").addEventListener("click", leaveCurrentRoom);
 }
 
 function renderSessionReplaced() {
   clearInterval(countdownInterval);
+  leaveButton.classList.add("hidden");
   helpButton.classList.add("hidden");
   connectionStatus.textContent = "Opened elsewhere";
   connectionStatus.classList.add("offline");
