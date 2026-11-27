@@ -3,44 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#FAFAF7" />
     <meta name="description" content="Bluff your way through an interview for a job you don't know." />
     <title>You're Hired?</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="page-shell">
-      <header class="topbar">
-        <button class="brand-button" id="brandButton" type="button" aria-label="You're Hired? home">
-          <span class="brand-mark" aria-hidden="true">YH</span>
-          <span>You're Hired?</span>
-        </button>
-        <div class="topbar-actions">
-          <span class="connection-pill" id="connectionStatus">Connecting…</span>
-          <button class="topbar-leave hidden" id="leaveButton" type="button">Leave</button>
-          <button class="icon-button hidden" id="helpButton" type="button" aria-label="How to play">?</button>
-        </div>
-      </header>
+    <main id="app" aria-live="polite"></main>
 
-      <main id="app" aria-live="polite"></main>
-    </div>
+    <div class="connection-slip hidden" id="connectionStatus" role="status">Reconnecting…</div>
 
-    <dialog id="helpDialog" class="help-dialog">
-      <div class="dialog-heading">
-        <div>
-          <span class="eyebrow">Rules</span>
-          <h2>How to play</h2>
-        </div>
-        <button class="icon-button" id="closeHelp" type="button" aria-label="Close">×</button>
+    <dialog id="helpDialog" class="help-dialog" aria-labelledby="helpTitle">
+      <div class="sheet-head">
+        <span class="l">Rules · Read before the interview</span>
+        <button class="l link-button" id="closeHelp" type="button">Close</button>
       </div>
-      <ol class="rules-list">
-        <li>Each round, one player interviews and one is in the hot seat.</li>
-        <li>The Interviewer secretly sees a job and asks up to 5 questions. Don't say the job or give it away!</li>
-        <li>The Candidate answers every question as if they already have the job, then guesses what it is.</li>
-        <li>Correct guess: BOTH players earn Offers (more if you guess early). Wrong guess: only the Interviewer scores.</li>
+      <h2 class="display" id="helpTitle">How to play</h2>
+      <ol class="t rules-list">
+        <li>Each round, one player is the Interviewer and one is the Candidate. Everyone else sits on the Panel and watches.</li>
+        <li>The Interviewer sees a secret job and asks up to 5 questions. Don't say the job or give it away.</li>
+        <li>The Candidate answers each question as if they already have the job, then makes one guess. You can guess early.</li>
+        <li>Right guess: both players earn Offers, more for guessing early. Wrong guess: only the Interviewer scores.</li>
         <li>Roles swap every round. Most Offers at the end wins.</li>
       </ol>
     </dialog>

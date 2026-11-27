@@ -2,19 +2,23 @@ const socket = io();
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 const connectionStatus = document.querySelector("#connectionStatus");
-const leaveButton = document.querySelector("#leaveButton");
-const helpButton = document.querySelector("#helpButton");
 const helpDialog = document.querySelector("#helpDialog");
 const closeHelp = document.querySelector("#closeHelp");
-const brandButton = document.querySelector("#brandButton");
 
 let gameState = null;
 let clockDelta = 0;
 let countdownInterval = null;
 let toastTimer = null;
 let lastConfettiKey = null;
+let lastScreenKey = null;
 let sessionWasReplaced = false;
 let rejoinToastShown = false;
+
+const ROUND_RULES = [
+  "The Interviewer sees a secret job and asks up to 5 questions.",
+  "The Candidate answers as if they already have it, then guesses.",
+  "Right guess: both earn Offers, more for guessing early. Then roles swap.",
+];
 
 const storage = {
   get() {
@@ -42,6 +46,11 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function listNames(names) {
+  if (names.length <= 1) return names[0] || "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 function showToast(message) {
   if (!message) return;
   toast.textContent = message;
@@ -59,9 +68,9 @@ function emitWithReply(event, payload = {}) {
   });
 }
 
-function setConnectionStatus(connected) {
-  connectionStatus.textContent = connected ? "Live connection" : "Reconnecting…";
-  connectionStatus.classList.toggle("offline", !connected);
+function setConnectionStatus(connected, label = "Reconnecting…") {
+  connectionStatus.textContent = label;
+  connectionStatus.classList.toggle("hidden", connected);
 }
 
 socket.on("connect", async () => {
@@ -96,58 +105,185 @@ socket.on("state", (nextState) => {
   render();
 });
 
-helpButton.addEventListener("click", () => helpDialog.showModal());
 closeHelp.addEventListener("click", () => helpDialog.close());
 helpDialog.addEventListener("click", (event) => {
   if (event.target === helpDialog) helpDialog.close();
 });
 
+// Header links ("Rules", "Leave") are redrawn with every sheet, so listen once on the app.
+app.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "rules") helpDialog.showModal();
+  if (action === "leave") leaveCurrentRoom();
+});
+
 function leaveCurrentRoom() {
-  leaveButton.disabled = true;
   if (socket.connected) socket.emit("leaveRoom", {}, () => {});
   storage.clear();
   gameState = null;
   sessionWasReplaced = false;
-  document.querySelector(".reconnect-overlay")?.remove();
+  document.querySelector(".overlay")?.remove();
   renderHome();
-  leaveButton.disabled = false;
 }
 
-leaveButton.addEventListener("click", leaveCurrentRoom);
-brandButton.addEventListener("click", () => {
-  if (gameState) return;
-  renderHome();
-});
+/* ---------- shared pieces ---------- */
+
+function headActions() {
+  return `<span class="head-actions"><button class="l link-button" type="button" data-action="rules">Rules</button><button class="l link-button" type="button" data-action="leave">Leave</button></span>`;
+}
+
+function sheetClass(screenKey, extra = "") {
+  const animate = screenKey !== lastScreenKey;
+  lastScreenKey = screenKey;
+  return `sheet ${extra} ${animate ? "" : "no-anim"}`.trim();
+}
+
+function roleTone(role) {
+  if (role === "candidate") return "tone-applicant";
+  if (role === "panel") return "tone-panel";
+  return "";
+}
+
+function copyLabel(role) {
+  if (role === "candidate") return "Applicant copy";
+  if (role === "panel") return "Panel copy";
+  return "Employer copy";
+}
+
+function activeName(id) {
+  return gameState.players.find((player) => player.id === id)?.name || "A player";
+}
+
+function scoreLine() {
+  return `${gameState.players.map((player) => `${escapeHtml(player.name)} ${player.score}`).join(" · ")} Offers`;
+}
+
+function gameHeader(rightLabel) {
+  const { role } = gameState.self;
+  const { settings, roundNumber } = gameState;
+  return `
+    <div class="sheet-head">
+      <span class="l">Interview record · ${copyLabel(role)}</span>
+      ${headActions()}
+    </div>
+    <div class="sheet-sub">
+      <span class="l">Round ${roundNumber} of ${settings.rounds} · ${escapeHtml(settings.difficulty)}</span>
+      <span class="l">${rightLabel ?? scoreLine()}</span>
+    </div>`;
+}
+
+function positionStrip() {
+  const { role } = gameState.self;
+  const job = gameState.active?.job;
+  if (role === "interviewer" && job) {
+    return `
+      <div class="record-strip">
+        <div><div class="l">Position being filled</div><div class="t job">${escapeHtml(job.title)}</div></div>
+        <div class="stamp-small">Don't say it</div>
+      </div>`;
+  }
+  const side = role === "candidate" ? "You guess<br>it later" : "Secret<br>this round";
+  return `
+    <div class="record-strip">
+      <div><div class="l">Position applied for</div><span class="redact" role="img" aria-label="Blacked out"></span></div>
+      <span class="l" style="text-align:right">${side}</span>
+    </div>`;
+}
+
+function exchangeRow(item, index) {
+  const answer = item.answer?.trim()
+    ? `<p class="t a">${escapeHtml(item.answer)}</p>`
+    : `<p class="t a none">No answer given.</p>`;
+  return `
+    <div class="exchange">
+      <span class="n">${index + 1}</span>
+      <div class="body"><p class="t q">${escapeHtml(item.question)}</p>${answer}</div>
+    </div>`;
+}
+
+function transcriptRows() {
+  return (gameState.active?.transcript || []).map(exchangeRow).join("");
+}
+
+function blankRows(from) {
+  let rows = "";
+  for (let number = from; number <= 5; number += 1) {
+    rows += `<div class="blank" aria-hidden="true"><span class="n">${number}</span></div>`;
+  }
+  return rows;
+}
+
+function timerMarkup(label, total = 30) {
+  if (!gameState.deadline) return "";
+  return `
+    <div class="timer" data-countdown data-total="${total}" data-format="clock" role="timer" aria-label="${total} seconds remaining">
+      <div class="timer-top"><span class="l">${label}</span><span class="t timer-value" data-timer-value>0:${String(total).padStart(2, "0")}</span></div>
+      <div class="timer-track"><div class="timer-fill" data-timer-bar></div></div>
+    </div>`;
+}
+
+function hintSlip(note = "") {
+  const hint = gameState.active?.hint;
+  if (!hint) return "";
+  return `<div class="hint-slip"><span class="l">Hint used</span><span class="t word">${escapeHtml(hint)}</span>${note ? `<span class="l">${note}</span>` : ""}</div>`;
+}
+
+function hintButton() {
+  return gameState.active?.canUseHint ? '<button class="btn btn-secondary grow-less" id="useHint" type="button">Use hint</button>' : "";
+}
+
+function hintNote() {
+  return gameState.active?.canUseHint ? '<p class="t small">A hint is one word, once per game. It costs 2 Offers if your guess is right.</p>' : "";
+}
+
+/* ---------- home ---------- */
 
 function renderHome(errorMessage) {
   clearInterval(countdownInterval);
-  leaveButton.classList.add("hidden");
-  helpButton.classList.add("hidden");
-  brandButton.removeAttribute("aria-disabled");
+  document.title = "You're Hired?";
   app.innerHTML = `
-    <section class="home-shell">
-      <div class="hero-copy">
-        <span class="eyebrow">A 2-player guessing game</span>
-        <h1>You're <span class="accent">Hired?</span></h1>
-        <p class="lede">One player interviews, the other bluffs. Answer like you already have the job, then guess what it is.</p>
+    <section class="${sheetClass("home", "sheet-wide")}" aria-labelledby="homeTitle">
+      <div class="sheet-head">
+        <span class="l">Sign-in sheet</span>
+        <span class="l"><span class="wide-only">A bluffing game for </span>2 to 8 players · No login</span>
       </div>
-      <div class="card entry-card">
-        <span class="eyebrow">Join</span>
-        <h2>Join a game</h2>
-        <p class="subtle">No login needed.</p>
-        <form id="entryForm">
-          <div class="form-group">
-            <label for="displayName">Display name</label>
-            <input id="displayName" maxlength="24" autocomplete="nickname" placeholder="Your name" required />
+
+      <div class="home-grid">
+        <div class="home-title">
+          <div class="lockup">
+            <h1 class="stamp" id="homeTitle">You're<br>Hired<span class="sr-only">?</span></h1>
+            <span class="qmark" aria-hidden="true">?</span>
           </div>
-          <button class="button button-primary button-block" id="createButton" type="button">Create room</button>
-          <div class="divider">or join a room</div>
-          <div class="form-group">
-            <label for="roomCode">4-letter room code</label>
-            <input class="code-input" id="roomCode" maxlength="4" autocomplete="off" autocapitalize="characters" placeholder="ABCD" />
+          <p class="t lede">One player interviews. The other bluffs through an interview for a job they can't see, then guesses what it is.</p>
+        </div>
+
+        <form class="home-form" id="entryForm">
+          <div class="field">
+            <label class="l" for="displayName">1 · Your name</label>
+            <input class="input" id="displayName" maxlength="24" autocomplete="nickname" placeholder="Type your name" required />
           </div>
-          <button class="button button-dark button-block" id="joinButton" type="submit">Join room</button>
+          <button class="btn btn-primary" id="createButton" type="button" style="margin-top:14px">Create room</button>
+          <div class="l or-rule" style="margin-top:22px">or join a friend's room</div>
+          <div class="field" style="margin-top:16px">
+            <label class="l" for="roomCode">2 · Room code, 4 letters</label>
+            <div class="code-row">
+              <input class="input comb" id="roomCode" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />
+              <button class="btn btn-secondary" id="joinButton" type="submit">Join</button>
+            </div>
+          </div>
         </form>
+
+        <div class="home-rules">
+          <div class="l">How a round works</div>
+          <ol class="t">${ROUND_RULES.map((rule) => `<li>${rule}</li>`).join("")}</ol>
+        </div>
+      </div>
+
+      <div class="l" style="margin-top:36px;padding-bottom:6px;border-bottom:2px solid var(--navy)">Every player gets a copy. The colour tells you your role.</div>
+      <div class="copies">
+        <div class="copy-card"><div class="l">White · Interviewer</div><div class="t">Position: <b>Lighthouse Keeper</b></div></div>
+        <div class="copy-card yellow"><div class="l">Yellow · Candidate</div><div class="t">Position: <span class="redact" role="img" aria-label="Blacked out"></span></div></div>
+        <div class="copy-card pink"><div class="l">Pink · Panel, watching</div><div class="t">Position: <span class="redact" role="img" aria-label="Blacked out"></span></div></div>
       </div>
     </section>`;
 
@@ -169,85 +305,101 @@ function renderHome(errorMessage) {
   if (errorMessage) showToast(errorMessage);
 }
 
+/* ---------- router ---------- */
+
 function render() {
   if (!gameState) return renderHome();
-  leaveButton.classList.remove("hidden");
-  helpButton.classList.remove("hidden");
-  brandButton.setAttribute("aria-disabled", "true");
+  const keep = captureTyping();
   if (gameState.phase === "lobby") renderLobby();
   else renderGame();
+  restoreTyping(keep);
   renderReconnectOverlay();
   startCountdown();
 }
 
-function playerRows(players, showScore = false) {
-  return players.map((player) => `
-    <div class="player-row">
-      <div class="player-identity">
-        <span class="avatar">${escapeHtml(player.name.slice(0, 1).toUpperCase())}</span>
-        <span class="player-name">${escapeHtml(player.name)} ${player.isHost ? '<span class="role-chip">Hiring Manager</span>' : ""}</span>
-      </div>
-      ${showScore ? `<strong>${player.score} ${player.score === 1 ? "Offer" : "Offers"}</strong>` : player.connected ? '<span class="status-chip">Ready</span>' : '<span class="offline-dot">Reconnecting</span>'}
-    </div>`).join("");
+// A state update (say, a player reconnecting) redraws the sheet; keep a half-typed question.
+function captureTyping() {
+  const input = document.querySelector("#questionInput");
+  if (!input) return null;
+  return {
+    key: `${gameState?.roundNumber}-${gameState?.active?.questionNumber}`,
+    value: input.value,
+    focused: document.activeElement === input,
+  };
 }
 
-function howToPlayCard() {
+function restoreTyping(keep) {
+  const input = document.querySelector("#questionInput");
+  if (!keep || !input || keep.key !== `${gameState.roundNumber}-${gameState.active?.questionNumber}`) return;
+  input.value = keep.value;
+  if (keep.focused) input.focus();
+}
+
+/* ---------- lobby ---------- */
+
+function choiceGroup(name, legend, values, current, enabled) {
   return `
-    <aside class="card rules-card">
-      <span class="eyebrow">Rules</span>
-      <h2>How to play</h2>
-      <ol class="rules-list">
-        <li>Each round, one player interviews and one is in the hot seat.</li>
-        <li>The Interviewer secretly sees a job and asks up to 5 questions. Don't say the job or give it away!</li>
-        <li>The Candidate answers every question as if they already have the job, then guesses what it is.</li>
-        <li>Correct guess: BOTH players earn Offers (more if you guess early). Wrong guess: only the Interviewer scores.</li>
-        <li>Roles swap every round. Most Offers at the end wins.</li>
-      </ol>
-    </aside>`;
+    <fieldset class="choice">
+      <legend class="l">${legend}</legend>
+      <div class="opts">${values.map((value) => `
+        <label class="opt"><input type="radio" name="${name}" value="${value}" ${String(current) === String(value) ? "checked" : ""} ${enabled ? "" : "disabled"} /><span class="box" aria-hidden="true"></span>${value}</label>`).join("")}
+      </div>
+    </fieldset>`;
 }
 
 function renderLobby() {
   const { code, players, settings, self } = gameState;
+  const host = players.find((player) => player.isHost);
+  const connectedCount = players.filter((player) => player.connected).length;
+  document.title = `Room ${code} · You're Hired?`;
+
+  let seats = "";
+  for (let index = 0; index < 8; index += 1) {
+    const player = players[index];
+    if (!player) {
+      seats += `<div class="seat"><span class="n">${index + 1}</span></div>`;
+      continue;
+    }
+    const isSelf = player.id === self.id;
+    const tags = [];
+    if (player.isHost) tags.push("Hiring Manager");
+    if (isSelf) tags.push("You");
+    if (!player.connected) tags.push('<span class="offline">Reconnecting</span>');
+    else if (!tags.length) tags.push("Ready");
+    seats += `<div class="seat"><span class="n">${index + 1}</span><span class="t name">${escapeHtml(player.name)}</span><span class="l">${tags.join(" · ")}</span></div>`;
+  }
+
+  let footNote = `${escapeHtml(host?.name || "The Hiring Manager")} picks the settings and starts the game.`;
+  if (self.isHost) footNote = connectedCount < 2 ? "Send the code to a friend. You need 2 players to start." : "Only the Hiring Manager can change these.";
+
   app.innerHTML = `
-    <section class="lobby-shell">
-      <div class="room-banner">
+    <section class="${sheetClass("lobby")}" aria-label="Waiting room">
+      <div class="sheet-head"><span class="l">Waiting room</span>${headActions()}</div>
+
+      <div class="code-banner">
         <div>
-          <span class="eyebrow">Waiting room</span>
-          <div class="room-code">${escapeHtml(code)}</div>
+          <div class="l">Room code · share it</div>
+          <div class="room-code" aria-label="Room code ${escapeHtml(code.split("").join(" "))}">${escapeHtml(code)}</div>
         </div>
-        <button class="button button-ghost" id="copyCode" type="button">Copy code</button>
+        <button class="btn btn-secondary btn-small" id="copyCode" type="button" style="margin-bottom:8px">Copy code</button>
       </div>
-      <div class="lobby-stack">
-        <div class="card">
-          <div class="phase-heading">
-            <div>
-              <h2>${players.length === 1 ? "Waiting for players" : "Ready to start"}</h2>
-              <p class="subtle">${players.length}/8 seats filled</p>
-            </div>
-            <span class="status-chip">Live</span>
-          </div>
-          <div class="player-list">${playerRows(players)}</div>
-          ${self.isHost ? `
-            <div class="settings-grid">
-              <div class="form-group">
-                <label for="difficulty">Difficulty</label>
-                <select id="difficulty">
-                  ${["Easy", "Hard", "Mixed"].map((value) => `<option ${settings.difficulty === value ? "selected" : ""}>${value}</option>`).join("")}
-                </select>
-              </div>
-              <div class="form-group">
-                <label for="rounds">Rounds</label>
-                <select id="rounds">
-                  ${[2,4,6,8].map((value) => `<option value="${value}" ${settings.rounds === value ? "selected" : ""}>${value}</option>`).join("")}
-                </select>
-              </div>
-            </div>
-            <button class="button button-primary button-block" id="startGame" type="button" ${players.filter((player) => player.connected).length < 2 ? "disabled" : ""}>Start interviews</button>
-          ` : `
-            <div class="waiting-note"><strong>${escapeHtml(players.find((player) => player.isHost)?.name || "The Hiring Manager")}</strong> picks the settings and starts the game.</div>
-          `}
-        </div>
-        ${howToPlayCard()}
+
+      <div class="section-head"><span class="l">Players signed in</span><span class="l">${players.length} of 8 seats</span></div>
+      ${seats}
+
+      ${choiceGroup("difficulty", "Difficulty", ["Easy", "Hard", "Mixed"], settings.difficulty, self.isHost)}
+      ${choiceGroup("rounds", "Rounds", [2, 4, 6, 8], settings.rounds, self.isHost)}
+
+      <div class="lobby-rules" style="margin-top:20px;padding-top:12px;border-top:1px solid var(--navy)">
+        <div class="l">How to play</div>
+        <ol class="t">${ROUND_RULES.map((rule) => `<li>${rule}</li>`).join("")}</ol>
+      </div>
+
+      <div class="push" style="padding-top:20px">
+        ${self.isHost
+          ? `<button class="btn btn-primary" id="startGame" type="button" style="width:100%" ${connectedCount < 2 ? "disabled" : ""}>Start interviews</button>`
+          : `<div class="btn btn-secondary" aria-hidden="true" style="width:100%;cursor:default">Waiting for ${escapeHtml(host?.name || "host")}<span class="dots"></span></div>`}
+        <p class="t foot-note">${footNote}</p>
       </div>
     </section>`;
 
@@ -260,85 +412,23 @@ function renderLobby() {
     }
   });
   if (self.isHost) {
-    const difficulty = document.querySelector("#difficulty");
-    const rounds = document.querySelector("#rounds");
-    const updateSettings = () => emitWithReply("updateSettings", { difficulty: difficulty.value, rounds: Number(rounds.value) });
-    difficulty.addEventListener("change", updateSettings);
-    rounds.addEventListener("change", updateSettings);
+    const updateSettings = () => {
+      const difficulty = document.querySelector('input[name="difficulty"]:checked')?.value;
+      const rounds = Number(document.querySelector('input[name="rounds"]:checked')?.value);
+      emitWithReply("updateSettings", { difficulty, rounds });
+    };
+    document.querySelectorAll('input[name="difficulty"], input[name="rounds"]').forEach((input) => {
+      input.addEventListener("change", updateSettings);
+    });
     document.querySelector("#startGame").addEventListener("click", () => emitWithReply("startGame"));
   }
 }
 
-function scoreStrip() {
-  return `<div class="score-strip">${gameState.players.map((player) => `
-    <div class="score-player">
-      <span class="avatar">${escapeHtml(player.name.slice(0, 1).toUpperCase())}</span>
-      <span class="score-player-copy"><span class="score-player-name">${escapeHtml(player.name)}</span><strong>${player.score} ${player.score === 1 ? "Offer" : "Offers"}</strong></span>
-    </div>`).join("")}</div>`;
-}
-
-function activeName(id) {
-  return gameState.players.find((player) => player.id === id)?.name || "A player";
-}
-
-function transcriptMarkup() {
-  const active = gameState.active;
-  if (!active?.transcript?.length) return '<div class="transcript-empty">The interview transcript will appear here.</div>';
-  return `<div class="transcript">${active.transcript.map((item, index) => `
-    <div class="transcript-exchange">
-      <div class="message-row question-row" style="--message-index:${index * 2}">
-        <div class="message-meta">Question ${index + 1}</div>
-        <p class="message-bubble question-bubble">${escapeHtml(item.question)}</p>
-      </div>
-      <div class="message-row answer-row" style="--message-index:${index * 2 + 1}">
-        <div class="message-meta">Answer</div>
-        <p class="message-bubble answer-bubble">${escapeHtml(item.answer)}</p>
-      </div>
-    </div>`).join("")}</div>`;
-}
-
-function timerMarkup() {
-  return gameState.deadline ? `
-    <div class="timer" data-countdown role="timer" aria-label="30 seconds remaining">
-      <svg class="timer-svg" viewBox="0 0 44 44" aria-hidden="true">
-        <circle class="timer-track" cx="22" cy="22" r="18"></circle>
-        <circle class="timer-progress" data-timer-progress cx="22" cy="22" r="18"></circle>
-      </svg>
-      <span class="timer-value" data-timer-value>30</span>
-    </div>` : "";
-}
-
-function stageShell(content, showTranscript = true) {
-  const role = gameState.self.role;
-  const panelNote = role === "panel" ? '<div class="panel-note">Panel view · The job stays secret</div>' : "";
-  const progressLabel = gameState.phase === "gameover"
-    ? "Final results"
-    : `Round ${gameState.roundNumber} of ${gameState.settings.rounds} · ${escapeHtml(gameState.settings.difficulty)}`;
-  return `
-    <div class="game-shell">
-      <header class="game-scorebar">
-        <div class="round-label"><span class="live-dot"></span>${progressLabel}</div>
-        ${scoreStrip()}
-      </header>
-      <section class="card stage-card phase-${gameState.phase}"><div class="stage-content">${panelNote}${content}</div></section>
-      ${showTranscript && gameState.active ? `
-        <section class="transcript-card" aria-label="Interview transcript">
-          <div class="transcript-heading">
-            <h3>Interview transcript</h3>
-            <span class="question-count">Question ${gameState.active.questionNumber || 1} of 5</span>
-          </div>
-          ${transcriptMarkup()}
-        </section>` : ""}
-    </div>`;
-}
-
-function secretJobChip() {
-  if (gameState.self.role !== "interviewer" || !gameState.active?.job) return "";
-  return `<div class="secret-job-chip"><span>Secret job</span><strong>${escapeHtml(gameState.active.job.title)}</strong></div>`;
-}
+/* ---------- game screens ---------- */
 
 function renderGame() {
   const phase = gameState.phase;
+  document.title = phase === "gameover" ? "Final scores · You're Hired?" : `Round ${gameState.roundNumber} · You're Hired?`;
   if (phase === "role") renderRole();
   else if (phase === "question") renderQuestion();
   else if (phase === "answer") renderAnswer();
@@ -347,48 +437,120 @@ function renderGame() {
   else if (phase === "gameover") renderGameOver();
 }
 
+function gameSheet(content, keySuffix = "play") {
+  const { role } = gameState.self;
+  const key = `round-${gameState.roundNumber}-${role}-${keySuffix}`;
+  return `<section class="${sheetClass(key, roleTone(role))}" aria-label="Interview record">${content}</section>`;
+}
+
 function renderRole() {
   const { role } = gameState.self;
-  const active = gameState.active;
-  let title = "You're on the Panel";
-  let body = `Watch ${escapeHtml(activeName(active.interviewerId))} interview ${escapeHtml(activeName(active.candidateId))}. The job stays secret.`;
+  const { active } = gameState;
+  const interviewer = escapeHtml(activeName(active.interviewerId));
+  const candidate = escapeHtml(activeName(active.candidateId));
+  let body;
+
   if (role === "interviewer") {
-    title = "You're the Interviewer";
-    body = `<div class="secret-card"><span class="label">Your secret job</span><div class="secret-job">${escapeHtml(active.job.title)}</div><span>${escapeHtml(active.job.difficulty)} · Don't say it.</span></div>`;
+    body = `
+      <div class="l" style="margin-top:30px">Your role this round</div>
+      <h1 class="display role-title">You're the<br>Interviewer</h1>
+      <div class="record" style="margin-top:26px">
+        <div class="l">Position being filled</div>
+        <div class="t record-title">${escapeHtml(active.job.title)}</div>
+        <div class="t small" style="margin-top:8px">${escapeHtml(active.job.difficulty)}</div>
+        <div class="stamp-big">Don't say it</div>
+      </div>
+      <div class="l" style="margin-top:42px">What ${candidate} sees · Applicant copy</div>
+      <div class="record" style="margin-top:8px;background:var(--yellow)">
+        <div class="l">Position applied for</div>
+        <span class="redact" role="img" aria-label="Blacked out"></span>
+      </div>
+      <p class="t" style="margin-top:14px;font-size:15px">${candidate} has to answer as if they already do this job. Ask up to 5 questions without giving it away.</p>`;
   } else if (role === "candidate") {
-    title = "You're in the hot seat";
-    body = "You don't know the job. Answer like you do, then guess it.";
+    body = `
+      <div class="l" style="margin-top:30px">Your role this round</div>
+      <h1 class="display role-title">You're in the<br>hot seat</h1>
+      <div class="record" style="margin-top:26px">
+        <div class="l">Position applied for</div>
+        <span class="redact" role="img" aria-label="Blacked out"></span>
+      </div>
+      <p class="t" style="margin-top:16px;font-size:15px">${interviewer} knows the job. You don't. Answer every question as if you already do it, then guess what it is. You can guess early.</p>`;
+  } else {
+    body = `
+      <div class="l" style="margin-top:30px">Your role this round</div>
+      <h1 class="display role-title">You're on<br>the Panel</h1>
+      <div class="record" style="margin-top:26px">
+        <div class="l">Position applied for</div>
+        <span class="redact" role="img" aria-label="Blacked out"></span>
+      </div>
+      <p class="t" style="margin-top:16px;font-size:15px">Watch ${interviewer} interview ${candidate}. The job stays secret from you too.</p>`;
   }
-  app.innerHTML = stageShell(`<div class="stage-center"><span class="eyebrow">Roles assigned</span><h1 class="role-title">${title}</h1><div class="lede">${body}</div><p class="subtle">Starting…</p></div>`);
+
+  app.innerHTML = gameSheet(`
+    ${gameHeader()}
+    ${body}
+    <div class="push" data-countdown data-total="3" data-format="seconds" style="padding-top:24px;display:flex;flex-direction:column;gap:10px">
+      <span class="countdown-bar"><span data-timer-bar></span></span>
+      <span class="l" data-timer-value>Interview starts in a moment</span>
+    </div>`, "role");
 }
 
 function renderQuestion() {
   const { role } = gameState.self;
   const { active } = gameState;
-  let content;
+  const interviewer = escapeHtml(activeName(active.interviewerId));
+  const candidate = escapeHtml(activeName(active.candidateId));
+  const number = active.questionNumber;
+  let sectionLabel = `Questions from ${interviewer}`;
+  let activeRow;
+
   if (role === "interviewer") {
-    content = `
-      ${secretJobChip()}
-      <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>Ask your next question</h2></div></div>
-      <form class="action-area" id="questionForm">
-        <div class="form-group"><label for="questionInput">Your question</label><input id="questionInput" maxlength="240" placeholder="Type a question" required /></div>
-        <button class="button button-primary" type="submit">Ask question</button>
-        <div class="preset-list">${gameState.presets.map((question) => `<button class="preset-button" type="button" data-preset="${escapeHtml(question)}">${escapeHtml(question)}</button>`).join("")}</div>
+    sectionLabel = `Questions asked of ${candidate}`;
+    activeRow = `
+      <form class="active-row" id="questionForm">
+        <span class="n">${number}</span>
+        <div class="stack">
+          <label class="l" for="questionInput">Your next question</label>
+          <input class="input" id="questionInput" maxlength="240" placeholder="Type question ${number}" autocomplete="off" required />
+          <button class="btn btn-primary" type="submit">Ask ${candidate}</button>
+        </div>
       </form>`;
   } else if (role === "candidate") {
-    content = `
-      <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>Waiting for a question</h2></div></div>
-      <p class="lede">Get ready to answer.</p>
-      ${active.hint ? `<div class="hint-box">Your one-word hint: <span class="hint-word">${escapeHtml(active.hint)}</span></div>` : ""}
-      <div class="button-row action-area">
-        ${active.transcript.length ? '<button class="button button-primary" id="makeGuess" type="button">Make my guess</button>' : ""}
-        ${active.canUseHint ? '<button class="button button-ghost" id="useHint" type="button">Use hint (once per game)</button>' : ""}
-      </div>
-      <p class="subtle" style="margin-top:12px">A hint costs 2 Offers from a correct guess (minimum 1).</p>`;
+    activeRow = `
+      <div class="active-row">
+        <span class="n">${number}</span>
+        <div class="stack">
+          <p class="t waiting-line">Waiting for ${interviewer}'s question<span class="dots"></span></p>
+          ${hintSlip()}
+          <div class="btn-row">
+            ${active.transcript.length ? '<button class="btn btn-primary grow" id="makeGuess" type="button">Guess now</button>' : ""}
+            ${hintButton()}
+          </div>
+          ${active.transcript.length ? '<p class="t small">Guessing early earns more Offers if you\'re right.</p>' : ""}
+          ${hintNote()}
+        </div>
+      </div>`;
   } else {
-    content = `<div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${escapeHtml(activeName(active.interviewerId))} is choosing a question</h2></div></div><p class="lede">You're watching this round.</p>`;
+    sectionLabel = `${interviewer} interviews ${candidate}`;
+    activeRow = `
+      <div class="active-row">
+        <span class="n">${number}</span>
+        <div class="stack"><p class="t waiting-line">${interviewer} is choosing question ${number}<span class="dots"></span></p></div>
+      </div>`;
   }
-  app.innerHTML = stageShell(content);
+
+  const presets = role === "interviewer" ? `
+    <div class="l" style="margin-top:18px">Stuck? Tap one to fill it in</div>
+    <div class="presets">${gameState.presets.map((question) => `<button class="pre" type="button" data-preset="${escapeHtml(question)}">${escapeHtml(question)}</button>`).join("")}</div>` : "";
+
+  app.innerHTML = gameSheet(`
+    ${gameHeader()}
+    ${positionStrip()}
+    <div class="section-head"><span class="l">${sectionLabel}</span><span class="l">${number} of 5</span></div>
+    ${transcriptRows()}
+    ${activeRow}
+    ${blankRows(number + 1)}
+    ${presets}`);
   if (role === "interviewer") bindQuestionForm();
   if (role === "candidate") bindCandidateActions();
 }
@@ -423,21 +585,46 @@ function bindCandidateActions() {
 function renderAnswer() {
   const { role } = gameState.self;
   const { active } = gameState;
-  let content = `
-    ${secretJobChip()}
-    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Answer the question" : `${escapeHtml(activeName(active.candidateId))} is answering`}</h2></div>${timerMarkup()}</div>
-    <div class="current-question">${escapeHtml(active.pendingQuestion)}</div>`;
+  const interviewer = escapeHtml(activeName(active.interviewerId));
+  const candidate = escapeHtml(activeName(active.candidateId));
+  const number = active.questionNumber;
+  const asked = `<p class="t asked">${escapeHtml(active.pendingQuestion)}</p>`;
+  let activeRow;
+  let timerLabel = `Time left for ${candidate}`;
+  let sectionLabel = role === "interviewer" ? `Questions asked of ${candidate}` : `Questions from ${interviewer}`;
+
   if (role === "candidate") {
-    content += `
-      ${active.hint ? `<div class="hint-box">Your one-word hint: <span class="hint-word">${escapeHtml(active.hint)}</span></div>` : ""}
-      <form class="action-area" id="answerForm">
-        <div class="form-group"><label for="answerInput">Your answer</label><textarea id="answerInput" maxlength="400" placeholder="Type your answer" autofocus>${escapeHtml(active.draft || "")}</textarea></div>
-        <div class="button-row"><button class="button button-primary" type="submit">Submit answer</button>${active.canUseHint ? '<button class="button button-ghost" id="useHint" type="button">Use Job Hint</button>' : ""}</div>
+    timerLabel = "Time left to answer";
+    activeRow = `
+      <form class="active-row" id="answerForm">
+        <span class="n">${number}</span>
+        <div class="stack">
+          ${asked}
+          <label class="l" for="answerInput" style="margin-top:2px">Your answer · bluff it</label>
+          <textarea class="t ruled" id="answerInput" maxlength="400" placeholder="Answer like you do this job" autofocus>${escapeHtml(active.draft || "")}</textarea>
+          ${hintSlip()}
+          <div class="btn-row"><button class="btn btn-primary grow" type="submit">Submit answer</button>${hintButton()}</div>
+          ${hintNote()}
+        </div>
       </form>`;
   } else {
-    content += `<p class="waiting-note">Their answer submits automatically when the timer ends.</p>`;
+    if (role === "panel") sectionLabel = `${interviewer} interviews ${candidate}`;
+    activeRow = `
+      <div class="active-row">
+        <span class="n">${number}</span>
+        <div class="stack">${asked}<p class="t waiting-line">${candidate} is answering<span class="dots"></span> It sends by itself when time runs out.</p></div>
+      </div>`;
   }
-  app.innerHTML = stageShell(content);
+
+  app.innerHTML = gameSheet(`
+    ${gameHeader()}
+    ${positionStrip()}
+    ${timerMarkup(timerLabel)}
+    <div class="section-head" style="margin-top:16px"><span class="l">${sectionLabel}</span><span class="l">${number} of 5</span></div>
+    ${transcriptRows()}
+    ${activeRow}
+    ${blankRows(number + 1)}`);
+
   if (role === "candidate") {
     const input = document.querySelector("#answerInput");
     let draftTimer;
@@ -457,21 +644,39 @@ function renderAnswer() {
 function renderGuess() {
   const { role } = gameState.self;
   const { active } = gameState;
-  let content = `
-    ${secretJobChip()}
-    <div class="phase-heading"><div><span class="question-count">Question ${active.questionNumber} of 5</span><h2>${role === "candidate" ? "Guess the job" : `${escapeHtml(activeName(active.candidateId))} is making a guess`}</h2></div>${timerMarkup()}</div>
-    `;
+  const candidate = escapeHtml(activeName(active.candidateId));
+  const count = active.transcript.length;
+  let body;
+
   if (role === "candidate") {
-    content += `
-      ${active.hint ? `<div class="hint-box">Your one-word hint: <span class="hint-word">${escapeHtml(active.hint)}</span></div>` : ""}
-      <form class="action-area" id="guessForm">
-        <div class="form-group"><label for="guessInput">What is the job?</label><input id="guessInput" maxlength="120" placeholder="Enter the job title" autocomplete="off" value="${escapeHtml(active.draft || "")}" autofocus required /></div>
-        <div class="button-row"><button class="button button-primary" type="submit">Submit guess</button>${active.canUseHint ? '<button class="button button-ghost" id="useHint" type="button">Use Job Hint</button>' : ""}</div>
-      </form>`;
+    body = `
+      ${timerMarkup("Time left to guess")}
+      <h1 class="display" style="margin-top:22px;font-size:48px;line-height:0.95">What's the job?</h1>
+      <form class="field" id="guessForm" style="margin-top:14px">
+        <label class="l" for="guessInput">Position applied for · One guess only</label>
+        <input class="input guess-input" id="guessInput" maxlength="120" placeholder="Type the job title" autocomplete="off" value="${escapeHtml(active.draft || "")}" autofocus required />
+        ${hintSlip("Costs 2 Offers if right")}
+        <div class="btn-row" style="margin-top:6px"><button class="btn btn-primary grow" type="submit">Submit guess</button>${hintButton()}</div>
+        ${hintNote()}
+      </form>
+      <div class="section-head" style="margin-top:22px"><span class="l">What was asked, what you said</span><span class="l">${count} of 5</span></div>`;
   } else {
-    content += `<p class="lede">They have one guess and 30 seconds.</p>`;
+    const line = role === "interviewer"
+      ? "One guess. If it's right, you both earn Offers."
+      : "One guess and 30 seconds.";
+    body = `
+      ${positionStrip()}
+      ${timerMarkup(`Time left for ${candidate}`)}
+      <h1 class="display" style="margin-top:22px;font-size:44px;line-height:0.95">${candidate} is guessing<span class="dots"></span></h1>
+      <p class="t" style="margin-top:10px;font-size:15px">${line}</p>
+      <div class="section-head" style="margin-top:22px"><span class="l">The interview so far</span><span class="l">${count} of 5</span></div>`;
   }
-  app.innerHTML = stageShell(content);
+
+  app.innerHTML = gameSheet(`
+    ${gameHeader()}
+    ${body}
+    ${transcriptRows() || '<p class="t small muted" style="padding:10px 0">No questions were asked.</p>'}`);
+
   if (role === "candidate") {
     const input = document.querySelector("#guessInput");
     let draftTimer;
@@ -489,24 +694,51 @@ function renderGuess() {
 }
 
 function renderResult() {
-  const result = gameState.active.result;
-  const canAdvance = [gameState.active.interviewerId, gameState.active.candidateId].includes(gameState.self.id);
-  const isLastRound = gameState.roundNumber >= gameState.settings.rounds;
-  const advanceLabel = isLastRound ? "See final results" : "Next round";
-  const message = result.correct ? "You're Hired!" : "We'll be in touch.";
-  const guessLine = result.timedOut ? "The guess timed out." : result.guess ? `The guess was “${escapeHtml(result.guess)}”.` : "No guess was submitted.";
-  const content = `
-    <div class="stage-center">
-      <span class="eyebrow">Round over</span>
-      <div class="result-badge ${result.correct ? "success" : "fail"}">${message}</div>
-      <div class="reveal"><span>The job was</span><strong>${escapeHtml(result.jobTitle)}</strong><p class="subtle" style="margin:8px 0 0">${guessLine}</p></div>
-      <h3>Offers earned this round</h3>
-      <div class="earnings">${result.earnings.map((earning) => `<div class="earning-row"><span>${escapeHtml(earning.name)}</span><strong>+${earning.offers} ${earning.offers === 1 ? "Offer" : "Offers"}</strong></div>`).join("")}</div>
-      ${canAdvance ? `<button class="button button-primary" id="nextRound" type="button">${advanceLabel}</button>` : '<p class="subtle">Waiting for an active player to continue…</p>'}
-    </div>`;
-  app.innerHTML = stageShell(content, false);
+  const { active, self, players, settings, roundNumber } = gameState;
+  const { result } = active;
+  const interviewer = escapeHtml(activeName(active.interviewerId));
+  const candidate = escapeHtml(activeName(active.candidateId));
+  const canAdvance = [active.interviewerId, active.candidateId].includes(self.id);
+  const isLastRound = roundNumber >= settings.rounds;
+  const questions = `${result.questionCount} ${result.questionCount === 1 ? "question" : "questions"}`;
+
+  let guessLine;
+  if (result.timedOut) guessLine = `${candidate} ran out of time after ${questions}.`;
+  else if (result.guess) guessLine = `${candidate} guessed “${escapeHtml(result.guess)}” after ${questions}.`;
+  else guessLine = `${candidate} didn't guess.`;
+
+  const stamp = result.correct
+    ? '<div class="stamp stamp-thud" role="img" aria-label="You\'re Hired!">You\'re<br>Hired</div>'
+    : '<div class="stamp stamp-red stamp-thud" role="img" aria-label="We\'ll be in touch.">We\'ll be<br>in touch</div>';
+
+  const earnings = result.earnings.map((earning) => {
+    const total = players.find((player) => player.id === earning.id)?.score ?? earning.offers;
+    const label = earning.id === active.interviewerId ? "Interviewer" : "Candidate";
+    return `<div class="earn-row t"><span class="who">${escapeHtml(earning.name)} <span class="l">${label}</span></span><span class="nums"><b>+${earning.offers}</b><span>${total}</span></span></div>`;
+  }).join("");
+
+  let footNote = "That was the last round.";
+  if (!isLastRound) footNote = players.length === 2 ? `Roles swap. ${candidate} interviews ${interviewer} next.` : "Roles swap next round.";
+
+  app.innerHTML = gameSheet(`
+    ${gameHeader("Round over")}
+    <div class="record" style="margin-top:18px">
+      <div class="l">The job was · Now on file</div>
+      <div class="t record-title">${escapeHtml(result.jobTitle)}</div>
+      <div class="t" style="margin-top:10px;font-size:15px">${guessLine}</div>
+    </div>
+    <div class="result-stage">${stamp}</div>
+    <div class="section-head" style="margin-top:0"><span class="l">Offers earned this round</span><span class="l">Total</span></div>
+    ${earnings}
+    <div class="push" style="padding-top:24px">
+      ${canAdvance
+        ? `<button class="btn btn-primary" id="nextRound" type="button" style="width:100%">${isLastRound ? "See final scores" : "Next round"}</button>`
+        : `<div class="btn btn-secondary" aria-hidden="true" style="width:100%;cursor:default">Waiting for ${interviewer} or ${candidate}</div>`}
+      <p class="t foot-note">${footNote}</p>
+    </div>`, "result");
+
   document.querySelector("#nextRound")?.addEventListener("click", () => emitWithReply("nextRound"));
-  const confettiKey = `${gameState.roundNumber}-${result.jobTitle}`;
+  const confettiKey = `${roundNumber}-${result.jobTitle}`;
   if (result.correct && lastConfettiKey !== confettiKey) {
     lastConfettiKey = confettiKey;
     launchConfetti();
@@ -514,44 +746,66 @@ function renderResult() {
 }
 
 function renderGameOver() {
-  const sorted = [...gameState.players].sort((a, b) => b.score - a.score);
+  const { players, settings, self } = gameState;
+  const sorted = [...players].sort((a, b) => b.score - a.score);
   const topScore = sorted[0]?.score ?? 0;
   const winners = sorted.filter((player) => player.score === topScore);
-  const displayPlayers = [...sorted.filter((player) => player.score !== topScore), ...winners];
-  const winnerText = winners.length > 1 ? "Co-hired!" : `${winners[0]?.name || "Nobody"} is hired!`;
-  const content = `
-    <div class="stage-center">
-      <span class="eyebrow">Final scores</span>
-      <div class="result-badge success">${escapeHtml(winnerText)}</div>
-      <div class="final-board">${displayPlayers.map((player, displayIndex) => {
-        const rank = sorted.findIndex((entry) => entry.score === player.score) + 1;
-        return `<div class="final-row ${player.score === topScore ? "winner" : ""}" style="--row-index:${displayIndex}"><span class="rank">#${rank}</span><span class="player-name">${escapeHtml(player.name)}</span><span class="offers">${player.score} ${player.score === 1 ? "Offer" : "Offers"}</span></div>`;
-      }).join("")}</div>
-      <div class="button-row final-actions">
-        <button class="button button-primary" id="playAgain" type="button">Play again</button>
-        <button class="button button-ghost" id="leaveGame" type="button">Leave</button>
+  const others = sorted.filter((player) => player.score !== topScore);
+  const winnerNames = winners.map((player) => escapeHtml(player.name));
+  const tied = winners.length > 1;
+
+  let letter = tied
+    ? `You tied for the most Offers after ${settings.rounds} rounds.`
+    : `Most Offers after ${settings.rounds} rounds.`;
+  if (others.length) letter += ` ${listNames(others.map((player) => escapeHtml(player.name)))}, we'll keep your details on file.`;
+
+  const standings = sorted.map((player, index) => {
+    const rank = sorted.findIndex((entry) => entry.score === player.score) + 1;
+    const isSelf = player.id === self.id ? ' <span class="sr-only">(you)</span>' : "";
+    return `<div class="standing ${player.score === topScore ? "winner" : ""}" style="--i:${index}"><span class="rank">${rank}</span><span class="t name">${escapeHtml(player.name)}${isSelf}</span><span class="t score">${player.score}</span></div>`;
+  }).join("");
+
+  const key = `gameover-${settings.rounds}`;
+  app.innerHTML = `
+    <section class="${sheetClass(key)}" aria-label="Final scores">
+      <div class="sheet-head">
+        <span class="l">Hiring decision · Final</span>
+        <span class="l">${settings.rounds} rounds · ${escapeHtml(settings.difficulty)}</span>
       </div>
-    </div>`;
-  app.innerHTML = stageShell(content, false);
+      <div class="t dear">Dear ${listNames(winnerNames)},</div>
+      <div class="final-stage"><h1 class="stamp stamp-thud">You're<br>Hired</h1></div>
+      <p class="t" style="font-size:15px">${letter}</p>
+
+      <div class="section-head" style="margin-top:26px"><span class="l">Final standings</span><span class="l">Offers</span></div>
+      ${standings}
+
+      <div class="push" style="padding-top:24px">
+        <div class="btn-row">
+          <button class="btn btn-primary grow" id="playAgain" type="button">Play again</button>
+          <button class="btn btn-secondary grow-less" id="leaveGame" type="button">Leave</button>
+        </div>
+        <p class="t foot-note">Play again keeps the room and the same players.</p>
+      </div>
+    </section>`;
+
   document.querySelector("#playAgain").addEventListener("click", () => emitWithReply("playAgain"));
   document.querySelector("#leaveGame").addEventListener("click", leaveCurrentRoom);
 }
 
+/* ---------- overlays ---------- */
+
 function renderSessionReplaced() {
   clearInterval(countdownInterval);
-  leaveButton.classList.add("hidden");
-  helpButton.classList.add("hidden");
-  connectionStatus.textContent = "Opened elsewhere";
-  connectionStatus.classList.add("offline");
-  document.querySelector(".reconnect-overlay")?.remove();
+  setConnectionStatus(false, "Opened in another tab");
+  document.querySelector(".overlay")?.remove();
   const overlay = document.createElement("div");
-  overlay.className = "reconnect-overlay session-replaced-overlay";
+  overlay.className = "overlay session-replaced-overlay";
   overlay.innerHTML = `
-    <div class="card reconnect-card">
-      <span class="eyebrow">Session moved</span>
-      <h2>This game is open in another tab</h2>
-      <p class="subtle">Only one tab can control this player at a time.</p>
-      <button class="button button-primary" id="useThisTab" type="button">Use this tab instead</button>
+    <div class="overlay-card" role="alertdialog" aria-labelledby="movedTitle">
+      <div class="sheet-head"><span class="l">Session moved</span></div>
+      <h2 class="display" id="movedTitle">This game is open in another tab</h2>
+      <p class="t">Only one tab can control this player at a time.</p>
+      <button class="btn btn-primary" id="useThisTab" type="button">Use this tab instead</button>
     </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector("#useThisTab").addEventListener("click", async () => {
@@ -560,6 +814,7 @@ function renderSessionReplaced() {
       sessionWasReplaced = false;
       gameState = null;
       overlay.remove();
+      setConnectionStatus(true);
       renderHome("Your saved room is no longer available.");
       return;
     }
@@ -574,44 +829,60 @@ function renderSessionReplaced() {
       storage.clear();
       gameState = null;
       overlay.remove();
+      setConnectionStatus(true);
       renderHome(response.error);
+    } else {
+      setConnectionStatus(true);
     }
   });
 }
 
 function renderReconnectOverlay() {
-  document.querySelector(".reconnect-overlay")?.remove();
+  document.querySelector(".overlay")?.remove();
   if (!gameState.waitingForNames?.length || gameState.phase === "gameover") return;
   const overlay = document.createElement("div");
-  overlay.className = "reconnect-overlay";
-  overlay.innerHTML = `<div class="card reconnect-card"><div class="pulse"></div><h2>Waiting for ${escapeHtml(gameState.waitingForNames.join(" and "))} to reconnect…</h2><p class="subtle">The game timer is paused and their seat is saved for 60 seconds.</p>${gameState.canEndGame ? '<button class="button button-dark" id="endGame" type="button">End game & show scores</button>' : ""}</div>`;
+  overlay.className = "overlay";
+  overlay.innerHTML = `
+    <div class="overlay-card" role="alertdialog" aria-labelledby="waitTitle">
+      <div class="sheet-head"><span class="l">Interview paused</span></div>
+      <h2 class="display" id="waitTitle">Waiting for ${escapeHtml(listNames(gameState.waitingForNames))} to reconnect<span class="dots"></span></h2>
+      <p class="t">The timer is paused and their seat is saved for 60 seconds.</p>
+      ${gameState.canEndGame ? '<button class="btn btn-primary" id="endGame" type="button">End game and show scores</button>' : ""}
+    </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector("#endGame")?.addEventListener("click", () => emitWithReply("endGame"));
 }
+
+/* ---------- timers & confetti ---------- */
 
 function startCountdown() {
   clearInterval(countdownInterval);
   const update = () => {
     const timer = document.querySelector("[data-countdown]");
     if (!timer || !gameState?.deadline) return;
+    const totalMs = Number(timer.dataset.total || 30) * 1000;
     const remainingMs = Math.max(0, gameState.deadline - (Date.now() + clockDelta));
     const remaining = Math.ceil(remainingMs / 1000);
-    const circumference = 2 * Math.PI * 18;
-    const progress = Math.min(1, remainingMs / 30_000);
+    const progress = Math.min(1, remainingMs / totalMs);
     const value = timer.querySelector("[data-timer-value]");
-    const ring = timer.querySelector("[data-timer-progress]");
-    if (value) value.textContent = remaining;
-    if (ring) ring.style.strokeDashoffset = String(circumference * (1 - progress));
-    timer.classList.toggle("urgent", remaining < 10);
-    timer.setAttribute("aria-label", `${remaining} seconds remaining`);
+    const bar = timer.querySelector("[data-timer-bar]");
+    if (timer.dataset.format === "clock") {
+      if (value) value.textContent = `0:${String(remaining).padStart(2, "0")}`;
+      timer.classList.toggle("urgent", remaining < 10);
+      timer.setAttribute("aria-label", `${remaining} seconds remaining`);
+    } else if (value) {
+      value.textContent = remaining > 0 ? `Interview starts in ${remaining} ${remaining === 1 ? "second" : "seconds"}` : "Interview starting";
+    }
+    if (bar) bar.style.width = `${progress * 100}%`;
   };
   update();
   countdownInterval = setInterval(update, 250);
 }
 
 function launchConfetti() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const layer = document.createElement("div");
-  const colors = ["#e9684d", "#20314b", "#b9dfcf", "#efc55d", "#fffdf8"];
+  const colors = ["#1B2B6F", "#C8281C", "#FFF3A3", "#F8D3DA", "#FFFFFF"];
   layer.className = "confetti";
   for (let index = 0; index < 70; index += 1) {
     const piece = document.createElement("span");
