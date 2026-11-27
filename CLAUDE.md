@@ -63,14 +63,14 @@ Reviewers will test with exactly 2 devices, so the game must be fun and complete
 - Repo-local identity is set. Commit messages end with: `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
 - Commit after each working milestone; push to main.
 
-## Status (as of 2026-10-10)
-- Game is complete and LIVE at https://youre-hired-production.up.railway.app (Railway auto-deploys from GitHub main; last deploy = commit 2b6fc4c).
+## Status (as of 2026-11-27)
+- Game is complete and LIVE at https://youre-hired-production.up.railway.app (Railway auto-deploys from GitHub main; last deploy = PR #1 merge 4c9608c).
 - Built by ChatGPT Work in this folder: `server.js` (Express + Socket.IO, in-memory rooms), `gameLogic.js`, `jobs.js` (40 Easy + 40 Hard), `public/` (plain HTML/CSS/JS). `npm start` / `npm test` (6 tests pass).
 - Done and verified by Claude in Chrome (two tabs): full 2-round games locally and on the live URL; scoring, hint, forbidden-word check, timers, reconnect, tab-takeover handoff, Leave room, host transfer, final/tie screens, Play again. See `docs/bug-log.md` for every bug found and fixed (use it for the Handshake description).
-- Restyled as a dark game-show stage; copy simplified (no hype wording). Prompts used with ChatGPT are in `docs/chatgpt-prompts.md`.
+- 2026-11-27: UI redesigned as "interview paperwork" (PR #1), built by Claude Code from the claude.ai Design canvas "You're Hired? — UI redesign" (https://claude.ai/artifact/YAbS2jWGahCajVfJYFQtkF): sign-in sheet landing page, paper copies colour-coded by role (white Interviewer, yellow Candidate, pink Panel), rubber-stamp results. Fonts: Barlow Condensed + Courier Prime. Only `public/` changed. Copy stays plain (no hype wording). Prompts used with ChatGPT are in `docs/chatgpt-prompts.md`.
 - Testing trick: in Claude in Chrome open player 2 at http://player2.localhost:3000 (separate localStorage); on the live URL load the second tab before the first creates a room.
 
 ## Next steps
 1. Sathvik: play once on phone + laptop with a friend at the live URL (phone layout is the only thing not verified by Claude).
-2. Optional polish: preset question chips are a single horizontal scroll row on desktop; wrap them on wide screens.
+2. Preset questions are now a dashed list (two columns on wide screens); the old chip-row polish item is done.
 3. Handshake submission (deadline Oct 31, 2026): title "You're Hired?", live link above, cover screenshot 3:2 ≥1200px wide (final "You're Hired!" confetti screen or the lobby works well), description ≤500 chars drafted from docs/bug-log.md, check "Share to Showcase".
