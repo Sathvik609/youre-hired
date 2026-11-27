@@ -1,4 +1,6 @@
-# ChatGPT Work prompts for "You're Hired?"
+# ChatGPT Work prompts for "You're Hired"
+
+The game was called "You're Hired?" when these were sent; the prompts below are kept word for word.
 
 Source of the starter prompt: Handshake mission page, Option B, step
 "Use the starter prompt to kick off the conversation" (copied verbatim 2026-10-10).

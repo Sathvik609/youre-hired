@@ -240,7 +240,7 @@ function hintNote() {
 
 function renderHome(errorMessage) {
   clearInterval(countdownInterval);
-  document.title = "You're Hired?";
+  document.title = "You're Hired";
   app.innerHTML = `
     <section class="${sheetClass("home", "sheet-wide")}" aria-labelledby="homeTitle">
       <div class="sheet-head">
@@ -251,8 +251,7 @@ function renderHome(errorMessage) {
       <div class="home-grid">
         <div class="home-title">
           <div class="lockup">
-            <h1 class="stamp" id="homeTitle">You're<br>Hired<span class="sr-only">?</span></h1>
-            <span class="qmark" aria-hidden="true">?</span>
+            <h1 class="stamp" id="homeTitle">You're<br>Hired</h1>
           </div>
           <p class="t lede">One player interviews. The other bluffs through an interview for a job they can't see, then guesses what it is.</p>
         </div>
@@ -351,7 +350,7 @@ function renderLobby() {
   const { code, players, settings, self } = gameState;
   const host = players.find((player) => player.isHost);
   const connectedCount = players.filter((player) => player.connected).length;
-  document.title = `Room ${code} · You're Hired?`;
+  document.title = `Room ${code} · You're Hired`;
 
   let seats = "";
   for (let index = 0; index < 8; index += 1) {
@@ -428,7 +427,7 @@ function renderLobby() {
 
 function renderGame() {
   const phase = gameState.phase;
-  document.title = phase === "gameover" ? "Final scores · You're Hired?" : `Round ${gameState.roundNumber} · You're Hired?`;
+  document.title = phase === "gameover" ? "Final scores · You're Hired" : `Round ${gameState.roundNumber} · You're Hired`;
   if (phase === "role") renderRole();
   else if (phase === "question") renderQuestion();
   else if (phase === "answer") renderAnswer();

@@ -1,4 +1,4 @@
-# You're Hired? — project context
+# You're Hired — project context
 
 ## What this is
 A 2-player (2–8 supported) real-time multiplayer guessing game built for the Handshake
@@ -14,7 +14,7 @@ Mission page: https://app.joinhandshake.com/learn/create-a-multiplayer-game-8d7d
 
 Reviewers will test with exactly 2 devices, so the game must be fun and complete with 2 players.
 
-## Game design: "You're Hired?"
+## Game design: "You're Hired"
 - Roles: one player is the **Interviewer**, the other is the **Candidate**. Roles swap every round.
 - The Interviewer secretly sees a job (e.g. "wedding DJ", "cruise ship magician", "night-shift nurse").
   The Candidate's screen just says "You're in the hot seat".
@@ -34,7 +34,8 @@ Reviewers will test with exactly 2 devices, so the game must be fun and complete
 - Handle refresh/reconnect: a player who reloads rejoins the same room and role.
 
 ## Naming
-- On-screen title: **You're Hired?** (with the question mark).
+- On-screen title: **You're Hired** (no question mark; changed 2026-11-27 to match the GitHub profile card). The win-screen stamp "You're Hired!" is a result, not the title.
+- Tagline (repo About, profile card, README): "A 2-player game: one player interviews the other, who has 5 questions to guess their secret job."
 - URLs, package name, repo, file names: `youre-hired` (no punctuation).
 
 ## Build workflow (agreed with Sathvik)
@@ -47,7 +48,7 @@ Reviewers will test with exactly 2 devices, so the game must be fun and complete
 - If ChatGPT gets stuck or the user asks, Claude Code may build or fix code directly in this repo.
 
 ## Hosting
-- Code lives in this folder. GitHub: https://github.com/Sathvik609/youre-hired (private; gh CLI logged in as Sathvik609).
+- Code lives in this folder. GitHub: https://github.com/Sathvik609/youre-hired (PUBLIC; gh CLI logged in as Sathvik609). About panel: tagline + live URL as website. Commit with the GitHub noreply email (repo-local git config), never a personal address.
 - Deploy target: **Railway** from the GitHub repo (real server, websockets OK). Prefer Node + Express + Socket.IO
   (or ws) with an in-memory room store. Server must read `PORT` from env and bind 0.0.0.0.
 - Netlify is a fallback only (Handshake's Netlify Functions + Blobs prompt exists if ever needed).
@@ -65,12 +66,12 @@ Reviewers will test with exactly 2 devices, so the game must be fun and complete
 
 ## Status (as of 2026-11-27)
 - Game is complete and LIVE at https://youre-hired-production.up.railway.app (Railway auto-deploys from GitHub main; last deploy = PR #1 merge 4c9608c).
-- Built by ChatGPT Work in this folder: `server.js` (Express + Socket.IO, in-memory rooms), `gameLogic.js`, `jobs.js` (40 Easy + 40 Hard), `public/` (plain HTML/CSS/JS). `npm start` / `npm test` (6 tests pass).
+- Built by ChatGPT Work in this folder: `server.js` (Express + Socket.IO, in-memory rooms), `gameLogic.js`, `jobs.js` (40 Easy + 40 Hard), `public/` (plain HTML/CSS/JS). `npm start` / `npm test` (8 tests pass, incl. security.test.js for malformed input + headers).
 - Done and verified by Claude in Chrome (two tabs): full 2-round games locally and on the live URL; scoring, hint, forbidden-word check, timers, reconnect, tab-takeover handoff, Leave room, host transfer, final/tie screens, Play again. See `docs/bug-log.md` for every bug found and fixed (use it for the Handshake description).
-- 2026-11-27: UI redesigned as "interview paperwork" (PR #1), built by Claude Code from the claude.ai Design canvas "You're Hired? — UI redesign" (https://claude.ai/artifact/YAbS2jWGahCajVfJYFQtkF): sign-in sheet landing page, paper copies colour-coded by role (white Interviewer, yellow Candidate, pink Panel), rubber-stamp results. Fonts: Barlow Condensed + Courier Prime. Only `public/` changed. Copy stays plain (no hype wording). Prompts used with ChatGPT are in `docs/chatgpt-prompts.md`.
+- 2026-11-27: UI redesigned as "interview paperwork" (PR #1), built by Claude Code from the claude.ai Design canvas "You're Hired? — UI redesign" (canvas name predates the rename) (https://claude.ai/artifact/YAbS2jWGahCajVfJYFQtkF): sign-in sheet landing page, paper copies colour-coded by role (white Interviewer, yellow Candidate, pink Panel), rubber-stamp results. Fonts: Barlow Condensed + Courier Prime. Only `public/` changed. Copy stays plain (no hype wording). Prompts used with ChatGPT are in `docs/chatgpt-prompts.md`.
 - Testing trick: in Claude in Chrome open player 2 at http://player2.localhost:3000 (separate localStorage); on the live URL load the second tab before the first creates a room.
 
 ## Next steps
 1. Sathvik: play once on phone + laptop with a friend at the live URL (phone layout is the only thing not verified by Claude).
 2. Preset questions are now a dashed list (two columns on wide screens); the old chip-row polish item is done.
-3. Handshake submission (deadline Oct 31, 2026): title "You're Hired?", live link above, cover screenshot 3:2 ≥1200px wide (final "You're Hired!" confetti screen or the lobby works well), description ≤500 chars drafted from docs/bug-log.md, check "Share to Showcase".
+3. Handshake submission (deadline Oct 31, 2026): title "You're Hired", live link above, cover screenshot 3:2 ≥1200px wide (final "You're Hired!" confetti screen or the lobby works well), description ≤500 chars drafted from docs/bug-log.md, check "Share to Showcase".

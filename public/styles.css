@@ -1,4 +1,4 @@
-/* You're Hired? — "interview paperwork" look.
+/* You're Hired — "interview paperwork" look.
    Every player holds a copy of the same record; the paper colour tells you your role:
    white = Interviewer (employer copy), yellow = Candidate (applicant copy), pink = Panel. */
 
@@ -237,15 +237,6 @@ h1, h2, h3, p { margin: 0; }
   position: relative;
   display: inline-block;
   margin: 12px 0 calc(var(--s) * 0.22) 6px;
-}
-.lockup .qmark {
-  position: absolute;
-  left: 84%;
-  top: calc(var(--s) * -0.36);
-  font: 800 calc(var(--s) * 2.58)/1 var(--display);
-  color: var(--red);
-  transform: rotate(9deg);
-  pointer-events: none;
 }
 .lede { max-width: 520px; margin-top: 16px; font-size: 19px; line-height: 1.5; }
 .home-rules ol { margin: 8px 0 0; padding-left: 24px; max-width: 560px; font-size: 15px; line-height: 1.5; }

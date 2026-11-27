@@ -1,5 +1,12 @@
 node_modules/
-.env
-.DS_Store
 dist/
 *.log
+.DS_Store
+
+# Secrets and local settings: never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.claude/settings.local.json

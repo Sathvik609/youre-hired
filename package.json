@@ -2,7 +2,7 @@
   "name": "youre-hired",
   "version": "1.0.0",
   "private": true,
-  "description": "A real-time multiplayer bluffing game about interviewing for a secret job.",
+  "description": "You're Hired: a 2-player game where one player interviews the other, who has 5 questions to guess their secret job.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -17,5 +17,10 @@
   },
   "devDependencies": {
     "socket.io-client": "^4.8.1"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sathvik609/youre-hired.git"
+  },
+  "homepage": "https://youre-hired-production.up.railway.app"
 }

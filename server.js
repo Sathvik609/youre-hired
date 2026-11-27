@@ -23,6 +23,15 @@ const EMPTY_ROOM_TTL_MS = 10 * 60_000;
 const VALID_DIFFICULTIES = new Set(["Easy", "Hard", "Mixed"]);
 const VALID_ROUNDS = new Set([2, 4, 6, 8]);
 
+// Abuse limits. The game keeps everything in memory, so these stop one client
+// from crashing the server or filling it up.
+const MAX_ROOMS = 2000;
+const MAX_MESSAGE_BYTES = 16 * 1024;
+const MAX_CONNECTIONS_PER_IP = 20;
+const ROOM_CREATES_PER_IP_PER_MINUTE = 10;
+const EVENT_BURST = 60;
+const EVENTS_PER_SECOND = 20;
+
 const PRESET_QUESTIONS = [
   "What does a typical day look like?",
   "What's the hardest part of this job?",
@@ -43,9 +52,36 @@ const PRESET_QUESTIONS = [
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer);
+const io = new Server(httpServer, { maxHttpBufferSize: MAX_MESSAGE_BYTES });
 const rooms = new Map();
+const connectionsByIp = new Map();
+const roomCreatesByIp = new Map();
 
+const SECURITY_HEADERS = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; "),
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Strict-Transport-Security": "max-age=31536000",
+};
+
+app.disable("x-powered-by");
+app.use((_request, response, next) => {
+  response.set(SECURITY_HEADERS);
+  next();
+});
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/health", (_request, response) => {
   response.json({ ok: true, rooms: rooms.size });
@@ -65,12 +101,67 @@ function makeRoomCode() {
   return code;
 }
 
+// Client input must be a string; anything else (objects, arrays, numbers) counts as empty.
+function asText(value) {
+  return typeof value === "string" ? value : "";
+}
+
 function cleanName(value) {
-  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 24);
+  return asText(value).replace(/\s+/g, " ").trim().slice(0, 24);
 }
 
 function cleanText(value, maxLength = 400) {
-  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+  return asText(value).replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+// Railway's edge sets X-Real-IP to the caller's address.
+function clientIp(socket) {
+  const forwarded = socket.handshake.headers["x-real-ip"];
+  return String(forwarded || socket.handshake.address || "unknown").trim();
+}
+
+function allowRoomCreate(ip) {
+  const now = Date.now();
+  const recent = (roomCreatesByIp.get(ip) || []).filter((time) => now - time < 60_000);
+  if (recent.length >= ROOM_CREATES_PER_IP_PER_MINUTE) {
+    roomCreatesByIp.set(ip, recent);
+    return false;
+  }
+  recent.push(now);
+  roomCreatesByIp.set(ip, recent);
+  return true;
+}
+
+// Token bucket per socket: short bursts are fine (typing sends drafts), floods are dropped.
+function allowEvent(socket) {
+  const now = Date.now();
+  const bucket = socket.data.bucket || { tokens: EVENT_BURST, at: now };
+  bucket.tokens = Math.min(EVENT_BURST, bucket.tokens + ((now - bucket.at) / 1000) * EVENTS_PER_SECOND);
+  bucket.at = now;
+  socket.data.bucket = bucket;
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
+// Every client event goes through here: the payload is always a plain object,
+// the callback is optional, and a thrown error is logged instead of crashing the process.
+function handle(socket, event, handler) {
+  socket.on(event, (payload, callback) => {
+    if (typeof payload === "function") {
+      callback = payload;
+      payload = undefined;
+    }
+    const data = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+    const respond = typeof callback === "function" ? callback : undefined;
+    if (!allowEvent(socket)) return reply(respond, { ok: false, error: "Slow down a little." });
+    try {
+      handler(data, respond);
+    } catch (error) {
+      console.error(`Error handling "${event}":`, error);
+      reply(respond, { ok: false, error: "Something went wrong. Try again." });
+    }
+  });
 }
 
 function reply(callback, payload) {
@@ -377,11 +468,31 @@ function attachPlayerToSocket(socket, room, player) {
   }
 }
 
+io.use((socket, next) => {
+  const ip = clientIp(socket);
+  const count = connectionsByIp.get(ip) || 0;
+  if (count >= MAX_CONNECTIONS_PER_IP) return next(new Error("Too many connections."));
+  connectionsByIp.set(ip, count + 1);
+  socket.data.ip = ip;
+  socket.on("disconnect", () => {
+    const remaining = (connectionsByIp.get(ip) || 1) - 1;
+    if (remaining > 0) connectionsByIp.set(ip, remaining);
+    else connectionsByIp.delete(ip);
+  });
+  next();
+});
+
 io.on("connection", (socket) => {
-  socket.on("createRoom", ({ name } = {}, callback) => {
+  handle(socket, "createRoom", ({ name }, callback) => {
     if (socket.data.roomCode) return reply(callback, { ok: false, error: "Already in a room." });
     const playerName = cleanName(name);
     if (!playerName) return reply(callback, { ok: false, error: "Enter a display name." });
+    if (rooms.size >= MAX_ROOMS) {
+      return reply(callback, { ok: false, error: "The office is full right now. Try again in a few minutes." });
+    }
+    if (!allowRoomCreate(socket.data.ip)) {
+      return reply(callback, { ok: false, error: "Too many new rooms. Wait a minute and try again." });
+    }
 
     const code = makeRoomCode();
     const token = randomToken();
@@ -419,9 +530,9 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("joinRoom", ({ name, code } = {}, callback) => {
+  handle(socket, "joinRoom", ({ name, code }, callback) => {
     if (socket.data.roomCode) return reply(callback, { ok: false, error: "Already in a room." });
-    const normalizedCode = String(code || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
+    const normalizedCode = asText(code).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 4);
     const room = rooms.get(normalizedCode);
     const playerName = cleanName(name);
     if (!playerName) return reply(callback, { ok: false, error: "Enter a display name." });
@@ -449,9 +560,9 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("reconnectRoom", ({ code, token } = {}, callback) => {
-    const room = rooms.get(String(code || "").toUpperCase());
-    const player = room?.players.get(String(token || ""));
+  handle(socket, "reconnectRoom", ({ code, token }, callback) => {
+    const room = rooms.get(asText(code).toUpperCase());
+    const player = room?.players.get(asText(token));
     if (!room || !player) return reply(callback, { ok: false, error: "Your saved room is no longer available." });
     attachPlayerToSocket(socket, room, player);
     resumeAfterReconnect(room, player.token);
@@ -459,7 +570,7 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("leaveRoom", (_payload, callback) => {
+  handle(socket, "leaveRoom", (_payload, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || !player || player.socketId !== socket.id) {
       return reply(callback, { ok: false, error: "You are not in that room." });
@@ -471,7 +582,7 @@ io.on("connection", (socket) => {
     reply(callback, { ok: true });
   });
 
-  socket.on("updateSettings", ({ difficulty, rounds } = {}, callback) => {
+  handle(socket, "updateSettings", ({ difficulty, rounds }, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || player.token !== room.hostToken || room.phase !== "lobby") {
       return reply(callback, { ok: false, error: "Only the Hiring Manager can change settings." });
@@ -484,7 +595,7 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("startGame", (_payload, callback) => {
+  handle(socket, "startGame", (_payload, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || player.token !== room.hostToken || room.phase !== "lobby") {
       return reply(callback, { ok: false, error: "Only the Hiring Manager can start the game." });
@@ -502,7 +613,7 @@ io.on("connection", (socket) => {
     beginRound(room);
   });
 
-  socket.on("askQuestion", ({ question } = {}, callback) => {
+  handle(socket, "askQuestion", ({ question }, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || room.phase !== "question" || player.id !== room.active?.interviewerId) {
       return reply(callback, { ok: false, error: "It isn't your turn to ask." });
@@ -520,14 +631,14 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("updateAnswerDraft", ({ text } = {}) => {
+  handle(socket, "updateAnswerDraft", ({ text }) => {
     const { room, player } = roomAndPlayer(socket);
     if (room?.phase === "answer" && player.id === room.active?.candidateId) {
-      room.active.answerDraft = String(text || "").slice(0, 400);
+      room.active.answerDraft = asText(text).slice(0, 400);
     }
   });
 
-  socket.on("submitAnswer", ({ text } = {}, callback) => {
+  handle(socket, "submitAnswer", ({ text }, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || room.phase !== "answer" || player.id !== room.active?.candidateId) {
       return reply(callback, { ok: false, error: "It isn't your turn to answer." });
@@ -536,7 +647,7 @@ io.on("connection", (socket) => {
     finishAnswer(room, text);
   });
 
-  socket.on("requestGuess", (_payload, callback) => {
+  handle(socket, "requestGuess", (_payload, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || room.phase !== "question" || player.id !== room.active?.candidateId || !room.active.transcript.length) {
       return reply(callback, { ok: false, error: "You can guess after an answer." });
@@ -548,7 +659,7 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("useHint", (_payload, callback) => {
+  handle(socket, "useHint", (_payload, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || !["question", "answer", "guess"].includes(room.phase) || player.id !== room.active?.candidateId) {
       return reply(callback, { ok: false, error: "The hint is only available to the Candidate." });
@@ -562,14 +673,14 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("updateGuessDraft", ({ text } = {}) => {
+  handle(socket, "updateGuessDraft", ({ text }) => {
     const { room, player } = roomAndPlayer(socket);
     if (room?.phase === "guess" && player.id === room.active?.candidateId) {
-      room.active.guessDraft = String(text || "").slice(0, 120);
+      room.active.guessDraft = asText(text).slice(0, 120);
     }
   });
 
-  socket.on("submitGuess", ({ guess } = {}, callback) => {
+  handle(socket, "submitGuess", ({ guess }, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || room.phase !== "guess" || player.id !== room.active?.candidateId) {
       return reply(callback, { ok: false, error: "It isn't your turn to guess." });
@@ -580,7 +691,7 @@ io.on("connection", (socket) => {
     finishGuess(room, text, false);
   });
 
-  socket.on("nextRound", (_payload, callback) => {
+  handle(socket, "nextRound", (_payload, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || room.phase !== "result" || ![room.active?.interviewerId, room.active?.candidateId].includes(player.id)) {
       return reply(callback, { ok: false, error: "An active player advances the round." });
@@ -591,7 +702,7 @@ io.on("connection", (socket) => {
     else beginRound(room);
   });
 
-  socket.on("playAgain", (_payload, callback) => {
+  handle(socket, "playAgain", (_payload, callback) => {
     const { room } = roomAndPlayer(socket);
     if (!room || room.phase !== "gameover") return reply(callback, { ok: false, error: "The game is still running." });
     clearPhaseTimer(room);
@@ -610,7 +721,7 @@ io.on("connection", (socket) => {
     emitState(room);
   });
 
-  socket.on("endGame", (_payload, callback) => {
+  handle(socket, "endGame", (_payload, callback) => {
     const { room, player } = roomAndPlayer(socket);
     if (!room || player.token !== room.hostToken || !room.waitingExpired) {
       return reply(callback, { ok: false, error: "The reconnect window is still open." });
@@ -650,11 +761,14 @@ setInterval(() => {
       rooms.delete(code);
     }
   }
+  for (const [ip, times] of roomCreatesByIp) {
+    if (!times.some((time) => now - time < 60_000)) roomCreatesByIp.delete(ip);
+  }
 }, 60_000).unref();
 
 if (require.main === module) {
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`You're Hired? is running at http://localhost:${PORT}`);
+    console.log(`You're Hired is running at http://localhost:${PORT}`);
   });
 }
 
